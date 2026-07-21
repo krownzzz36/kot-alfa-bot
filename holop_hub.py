@@ -28,7 +28,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.21-5"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.21-6"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -456,6 +456,43 @@ def save_targets(text):
         return False
 
 
+# ─────────────── настройки боя (smash_settings.json) ───────────────
+SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50}
+
+
+def load_smash_settings():
+    """Текущие настройки боя (файл поверх дефолтов)."""
+    cur = dict(SMASH_SETTINGS_DEFAULTS)
+    try:
+        with open(path("smash_settings.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        for k in SMASH_SETTINGS_DEFAULTS:
+            if k in data:
+                cur[k] = int(data[k])
+    except (OSError, ValueError, TypeError):
+        pass
+    return cur
+
+
+def save_smash_settings(body):
+    """Записать настройки боя из панели с разумными ограничениями."""
+    cur = load_smash_settings()
+    try:
+        mn = int(body.get("my_min_hp", cur["my_min_hp"]))
+        rec = int(body.get("my_recover_to", cur["my_recover_to"]))
+    except (TypeError, ValueError):
+        return False
+    # здравые рамки: игровой минимум HP — 20; лечиться нужно выше порога
+    mn = max(20, min(mn, 100))
+    rec = max(mn + 1, min(rec, 100))
+    try:
+        with open(path("smash_settings.json"), "w", encoding="utf-8") as f:
+            json.dump({"my_min_hp": mn, "my_recover_to": rec}, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError:
+        return False
+
+
 # ─────────────── разовые модули (oneshot) ───────────────
 def build_args(mid, action, fields):
     f = fields or {}
@@ -613,6 +650,8 @@ class H(BaseHTTPRequestHandler):
             self._json(ui_config())
         elif p == "/api/targets":
             self._send(200, load_targets(), "text/plain; charset=utf-8")
+        elif p == "/api/raids/settings":
+            self._json(load_smash_settings())
         elif p == "/api/status_board":
             self._json(status_board())
         elif p.startswith("/api/") and p.endswith("/status"):
@@ -674,6 +713,8 @@ class H(BaseHTTPRequestHandler):
                 stop_night(); return self._json({"ok": True})
             if mid == "raids" and action == "save":
                 return self._json({"ok": save_targets(raw if not body else body.get("text", ""))})
+            if mid == "raids" and action == "settings":
+                return self._json({"ok": save_smash_settings(body)})
             if action == "run":
                 return self._json(oneshot_run(mid, body.get("action", "run"), body.get("fields", {})))
             if action == "stop":
@@ -760,7 +801,16 @@ function render(mid){
       <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
       <label>🎯 Цели (ник в строке)</label><textarea id="targets" rows="10" spellcheck="false"></textarea>
       <button class="b-blue" onclick="saveTargets()">💾 Сохранить список</button>
-      <div class="note" id="note"></div></div>`;
+      <div class="note" id="note"></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+        <div style="font-weight:700;font-size:13px;margin-bottom:2px">⚔️ Настройки боя</div>
+        <label>Воевать, пока моё HP выше (иначе — лечиться)</label>
+        <input id="set_min_hp" type="number" min="20" max="100">
+        <label>Лечиться до HP</label>
+        <input id="set_recover" type="number" min="21" max="100">
+        <button class="b-blue" style="margin-top:8px" onclick="saveSettings()">💾 Сохранить настройки</button>
+        <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
+      </div></div>`;
   } else {
     const fields=(m.fields||[]).map(fieldHTML).join('');
     const sels=(m.selects||[]).map(selectHTML).join('');
@@ -784,7 +834,7 @@ function render(mid){
   }
   main.innerHTML=`<p class="desc">${m.desc||''} <span id="mpill"></span></p>
     <div class="row"><div class="col-log"><pre class="log" id="log">…</pre></div>${side}</div>`;
-  if(m.kind==='loop') loadTargets();
+  if(m.kind==='loop'){ loadTargets(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
 }
 let nightOn=false;
@@ -851,6 +901,23 @@ async function loadTargets(){ try{const r=await fetch('/api/targets');const t=$(
 async function saveTargets(){ const t=$('#targets'); if(!t)return;
   try{await fetch('/api/raids/save',{method:'POST',body:t.value});
     const n=$('#note'); if(n){n.textContent='✅ сохранено (применится в ближайшую минуту)'; setTimeout(()=>n.textContent='',6000);} }catch(e){}
+}
+async function loadSettings(){
+  try{ const d=await (await fetch('/api/raids/settings')).json();
+    const a=$('#set_min_hp'), b=$('#set_recover');
+    if(a && document.activeElement!==a) a.value=d.my_min_hp;
+    if(b && document.activeElement!==b) b.value=d.my_recover_to;
+  }catch(e){}
+}
+async function saveSettings(){
+  const a=$('#set_min_hp'), b=$('#set_recover'); if(!a||!b) return;
+  const body={my_min_hp:parseInt(a.value||'25',10), my_recover_to:parseInt(b.value||'50',10)};
+  try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
+    const d=await r.json(); const n=$('#snote');
+    if(n){ n.textContent=d.ok?'✅ настройки сохранены — применятся в ближайший цикл':'ошибка сохранения';
+      setTimeout(()=>{n.textContent='Меняется на лету — бот подхватит в ближайший цикл.';},6000);}
+    loadSettings();
+  }catch(e){}
 }
 async function init(){
   CFG=await (await fetch('/api/config')).json();
