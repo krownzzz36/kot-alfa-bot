@@ -28,7 +28,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.21-4"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.21-5"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -264,8 +264,10 @@ MODULES = [
     {
         "id": "find", "title": "Найти цели", "emoji": "🔎", "kind": "oneshot",
         "script": "holop_raid.py", "log": "hub_find.out",
+        "result_file": "raid_targets.txt",   # найденные ники (столбиком) — для поля результата
+        "result_send_to": "raids",           # кнопка «В Набеги» добавляет их в список набегов
         "desc": "Сканирует богатых бьющихся соперников (сорт. по серебру) и выдаёт список ников. "
-                "Скопируй их из лога в «Набеги» → Цели.",
+                "Справа в поле «Найденные ники» — кнопки «Копировать» и «В Набеги».",
         "fields": [{"id": "want", "label": "Сколько целей найти", "kind": "number", "default": 10},
                    {"id": "pages", "label": "Сколько страниц сканировать", "kind": "number", "default": 6}],
         "actions": [{"id": "run", "label": "🔎 Найти цели"},
@@ -579,7 +581,8 @@ def status_board():
 # ─────────────── HTTP ───────────────
 def ui_config():
     return [{k: m.get(k) for k in
-             ("id", "title", "emoji", "kind", "desc", "fields", "selects", "actions")}
+             ("id", "title", "emoji", "kind", "desc", "fields", "selects", "actions",
+              "result_file", "result_send_to")}
             for m in MODULES]
 
 
@@ -619,6 +622,17 @@ class H(BaseHTTPRequestHandler):
                         "state": raids_state() if mid == "raids" else ("run" if is_running(mid) else "idle"),
                         "night": night_running() if mid == "raids" else False,
                         "log": tail(mod.get("log", "")) if mod.get("log") else ""})
+        elif p.startswith("/api/") and p.endswith("/results"):
+            mid = p.split("/")[2]
+            rf = MOD.get(mid, {}).get("result_file")
+            txt = ""
+            if rf:
+                try:
+                    with open(path(rf), encoding="utf-8", errors="replace") as f:
+                        txt = f.read()
+                except OSError:
+                    txt = ""
+            self._send(200, txt, "text/plain; charset=utf-8")
         else:
             self._send(404, "not found", "text/plain; charset=utf-8")
 
@@ -754,9 +768,19 @@ function render(mid){
       const cls=a.id==='run'?'b-green':a.id==='clear'?'b-red':'b-grey';
       return `<button class="${cls}" onclick="runOne('${mid}','${a.id}')">${a.label}</button>`;
     }).join('');
+    let resultBox='';
+    if(m.result_file){
+      resultBox=`<label style="margin-top:12px">🎯 Найденные ники (можно выделять/править)</label>
+        <textarea id="results" rows="12" spellcheck="false" placeholder="здесь появятся найденные ники после «Найти цели»"></textarea>
+        <div class="btns">
+          <button class="b-blue" onclick="copyResults()">📋 Копировать</button>
+          ${m.result_send_to?`<button class="b-green" onclick="sendResults('${m.result_send_to}')">➡️ В Набеги</button>`:''}
+        </div>
+        <div class="note" id="rnote"></div>`;
+    }
     side=`<div class="side">${fields}${sels}<div class="btns">${acts}
       <button class="b-red" onclick="post('${mid}','stop')">⏹ Стоп</button></div>
-      <div class="note" id="note"></div></div>`;
+      <div class="note" id="note"></div>${resultBox}</div>`;
   }
   main.innerHTML=`<p class="desc">${m.desc||''} <span id="mpill"></span></p>
     <div class="row"><div class="col-log"><pre class="log" id="log">…</pre></div>${side}</div>`;
@@ -773,6 +797,33 @@ async function pollMod(){
     const log=$('#log'); if(log){ const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<26;
       log.textContent=d.log||'(пусто)'; if(bottom) log.scrollTop=log.scrollHeight; }
   }catch(e){}
+  loadResults();
+}
+async function loadResults(){
+  const t=$('#results'); if(!t) return;
+  // не перетираем поле, пока в нём выделяют/печатают — иначе слетает выделение
+  if(document.activeElement===t) return;
+  try{ const txt=await (await fetch('/api/'+active+'/results')).text();
+    if(t.value!==txt) t.value=txt; }catch(e){}
+}
+function copyResults(){
+  const t=$('#results'); if(!t||!t.value.trim()){ return; }
+  t.focus(); t.select();
+  const done=()=>{ const n=$('#rnote'); if(n){n.textContent='✅ скопировано в буфер'; setTimeout(()=>n.textContent='',4000);} };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t.value).then(done).catch(()=>{ try{document.execCommand('copy');}catch(e){} done(); });
+  } else { try{document.execCommand('copy');}catch(e){} done(); }
+}
+async function sendResults(target){
+  const t=$('#results'); if(!t||!t.value.trim()) return;
+  const clean=s=>s.split('\n').map(x=>x.split('#')[0].trim()).filter(Boolean);
+  const fresh=clean(t.value);
+  let existing=[];
+  try{ existing=clean(await (await fetch('/api/targets')).text()); }catch(e){}
+  const merged=existing.slice();
+  fresh.forEach(n=>{ if(!merged.includes(n)) merged.push(n); });
+  try{ await fetch('/api/'+target+'/save',{method:'POST',body:merged.join('\n')});
+    const n=$('#rnote'); if(n){n.textContent='✅ добавлено в Набеги (всего '+merged.length+') — открой вкладку ⚔️ Набеги'; setTimeout(()=>n.textContent='',7000);} }catch(e){}
 }
 async function toggleNight(){
   const to=nightOn?'night_off':'night_on';
