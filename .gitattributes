@@ -1,0 +1,6 @@
+# .bat должен быть с Windows-переводами строк (CRLF), иначе может не запускаться
+*.bat        text eol=crlf
+# скрипты запуска и python — с Unix-переводами строк
+*.command    text eol=lf
+*.sh         text eol=lf
+*.py         text eol=lf

@@ -1,0 +1,20 @@
+{
+  "api_id": 0,
+  "api_hash": "ВСТАВЬ_СЮДА_api_hash",
+  "session_name": "holop_session",
+  "bot_username": "holop",
+
+  "target_profession": "Воин",
+  "guard_when_done": true,
+
+  "max_iterations": 40,
+  "max_captures_per_session": 0,
+
+  "min_delay": 0.8,
+  "max_delay": 1.8,
+  "fast_min_delay": 0.15,
+  "fast_max_delay": 0.4,
+
+  "dry_run": false,
+  "allow_star_spend": false
+}

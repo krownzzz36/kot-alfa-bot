@@ -1,0 +1,22 @@
+# НИКОГДА не коммитить личный вход (ключ от аккаунта Telegram!)
+config.json
+*.session
+*.session-journal
+
+# логи и служебные файлы
+startup_log.txt
+hub_error.log
+*.log
+*.out
+*.pid
+hub_*.txt
+scout_targets.txt
+smash_targets.txt
+smash_control.txt
+raid_targets.txt
+nicks.txt
+
+# python
+__pycache__/
+*.pyc
+.DS_Store
