@@ -1,19 +1,19 @@
 @echo off
-chcp 65001 >nul
-title Пульт Холопа
+rem ASCII-only launcher: no codepage/encoding surprises on any Windows.
+title Holop Panel
 cd /d "%~dp0"
 
 set "LOG=%~dp0startup_log.txt"
-echo === Запуск %date% %time% === > "%LOG%"
+echo === start %date% %time% === > "%LOG%"
 
 echo(
 echo   ============================
-echo        ПУЛЬТ ХОЛОПА
+echo         HOLOP PANEL
 echo   ============================
 echo(
 
-rem ---------- 1. ищем РАБОЧИЙ Python ----------
-rem (проверяем реальным запуском -c, чтобы отсеять фейковый ярлык из Microsoft Store)
+rem ---------- 1. find a WORKING python ----------
+rem (real run of -c filters out the fake Microsoft Store stub)
 set "PYCMD="
 for %%P in ("py -3" "py" "python" "python3") do (
   if not defined PYCMD (
@@ -23,50 +23,48 @@ for %%P in ("py -3" "py" "python" "python3") do (
 )
 
 if not defined PYCMD (
-  echo [X] Рабочий Python не найден.
-  echo     ^(Возможно, стоит "заглушка" из Microsoft Store — она не годится.^)
+  echo [X] Working Python not found.
+  echo     ^(A Microsoft Store "stub" does not count.^)
   echo(
-  echo   Как починить:
-  echo     1. Открой  https://www.python.org/downloads/
-  echo     2. Скачай и запусти установщик.
-  echo     3. ВНИЗУ первого окна поставь галочку "Add python.exe to PATH".
-  echo     4. Нажми Install Now, дождись конца.
-  echo     5. Запусти START.bat снова.
+  echo   How to fix:
+  echo     1. Open  https://www.python.org/downloads/
+  echo     2. Run the installer.
+  echo     3. TICK the box "Add python.exe to PATH" at the bottom.
+  echo     4. Click Install Now, wait, then run START.bat again.
   echo(
   echo PYTHON NOT FOUND >> "%LOG%"
   pause
   exit /b 1
 )
 echo [ok] Python: %PYCMD% >> "%LOG%"
-echo   Python найден: %PYCMD%
+echo   Python found: %PYCMD%
 
-rem ---------- 2. библиотека Telegram (telethon) ----------
+rem ---------- 2. Telegram library (telethon) ----------
 %PYCMD% -c "import telethon" >>"%LOG%" 2>&1
 if errorlevel 1 (
-  echo   Первый запуск: ставлю библиотеку Telegram, подожди ~минуту...
+  echo   First run: installing Telegram library, please wait ~1 min...
   %PYCMD% -m pip install --user telethon >>"%LOG%" 2>&1
   if errorlevel 1 %PYCMD% -m pip install telethon >>"%LOG%" 2>&1
   %PYCMD% -c "import telethon" >>"%LOG%" 2>&1
   if errorlevel 1 (
     echo(
-    echo [X] Не смог установить библиотеку telethon.
-    echo     Подробности в файле startup_log.txt рядом.
-    echo     Проверь интернет и запусти START.bat снова.
+    echo [X] Could not install telethon. See startup_log.txt next to this file.
+    echo     Check the internet connection and run START.bat again.
     pause
     exit /b 1
   )
 )
 echo [ok] telethon >> "%LOG%"
-echo   Библиотека Telegram на месте.
+echo   Telegram library is ready.
 
-rem ---------- 3. запуск пульта ----------
+rem ---------- 3. run the panel ----------
 echo(
 echo   --------------------------------------------
-echo    Запускаю пульт. Браузер откроется сам.
-echo    Если нет — открой:  http://127.0.0.1:8777/
+echo    Starting. The browser will open by itself.
+echo    If not, open:  http://127.0.0.1:8777/
 echo(
-echo    ЭТО ОКНО НЕ ЗАКРЫВАЙ (свернуть можно).
-echo    Закрыть окно = остановить пульт и ботов.
+echo    DO NOT CLOSE THIS WINDOW (you can minimize it).
+echo    Closing this window = stopping the panel and bots.
 echo   --------------------------------------------
 echo(
 echo START HUB >> "%LOG%"
@@ -74,6 +72,6 @@ echo START HUB >> "%LOG%"
 %PYCMD% holop_hub.py 2>>"%LOG%"
 
 echo(
-echo   Пульт остановлен.
-echo   Если что-то пошло не так — пришли файлы  startup_log.txt  и  hub_error.log
+echo   Panel stopped.
+echo   If something went wrong, send me:  startup_log.txt  and  hub_error.log
 pause

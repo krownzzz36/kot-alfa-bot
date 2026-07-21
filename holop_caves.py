@@ -55,6 +55,13 @@ from telethon.tl.functions.messages import (
 HERE = os.path.dirname(os.path.abspath(__file__))
 MSK = timezone(timedelta(hours=3))
 
+# Windows-консоль (cp1251) рушит эмодзи в выводе — переводим в UTF-8 с заменой.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── хрупкие строки игры (правь только тут, если игра обновится) ───────────────
 CMD_CAVES        = "Пещеры"
 MENU_MARKER      = "ПЕЩЕРЫ"            # маркер экрана меню пещер

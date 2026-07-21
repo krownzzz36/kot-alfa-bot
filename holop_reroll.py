@@ -49,6 +49,19 @@ from telethon.sessions import StringSession
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+
+def _make_console_utf8():
+    """Windows-консоль (cp1251/cp866) не умеет эмодзи и рушит вывод с UnicodeEncodeError.
+    Переводим stdout/stderr в UTF-8 с заменой непечатаемого — процесс больше не падает."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_make_console_utf8()
+
 # ════════════════════════════════════════════════════════════════════════════
 #  ВСЕ ХРУПКИЕ СТРОКИ ИГРЫ — ПРАВЬ ТОЛЬКО ТУТ, ЕСЛИ ИГРА ОБНОВИТСЯ
 #  (тексты кнопок и сообщений бота @holop, проверены вживую 25.06.2026)
@@ -130,6 +143,7 @@ logger = logging.getLogger("holop")
 
 
 def setup_logging():
+    _make_console_utf8()
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     sh = logging.StreamHandler(sys.stdout)
