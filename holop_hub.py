@@ -269,7 +269,11 @@ MODULES = [
         "desc": "Сканирует богатых бьющихся соперников (сорт. по серебру) и выдаёт список ников. "
                 "Справа в поле «Найденные ники» — кнопки «Копировать» и «В Набеги».",
         "fields": [{"id": "want", "label": "Сколько целей найти", "kind": "number", "default": 10},
-                   {"id": "pages", "label": "Сколько страниц сканировать", "kind": "number", "default": 6}],
+                   {"id": "pages", "label": "Сколько страниц сканировать", "kind": "number", "default": 6},
+                   {"id": "max_def", "label": "Макс. защита цели (0 = любая; напр. 500 для боя за 1 HP)",
+                    "kind": "number", "default": 0}],
+        "selects": [{"id": "skip_def", "label": "Пропускать цели с ров/частокол/защитой",
+                     "options": ["Да", "Нет"], "default": "Да"}],
         "actions": [{"id": "run", "label": "🔎 Найти цели"},
                     {"id": "dry", "label": "Холостой (dry-run)"}],
     },
@@ -457,7 +461,9 @@ def save_targets(text):
 
 
 # ─────────────── настройки боя (smash_settings.json) ───────────────
-SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50}
+SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
+                           "regen_auto": False, "auto_kazna": False, "auto_defense": False,
+                           "pierce_defenses": True}
 
 
 def load_smash_settings():
@@ -468,7 +474,7 @@ def load_smash_settings():
             data = json.load(f)
         for k in SMASH_SETTINGS_DEFAULTS:
             if k in data:
-                cur[k] = int(data[k])
+                cur[k] = data[k]
     except (OSError, ValueError, TypeError):
         pass
     return cur
@@ -477,17 +483,21 @@ def load_smash_settings():
 def save_smash_settings(body):
     """Записать настройки боя из панели с разумными ограничениями."""
     cur = load_smash_settings()
+    out = dict(cur)
     try:
-        mn = int(body.get("my_min_hp", cur["my_min_hp"]))
-        rec = int(body.get("my_recover_to", cur["my_recover_to"]))
+        out["my_min_hp"] = max(20, min(int(body.get("my_min_hp", cur["my_min_hp"])), 100))
+        out["my_recover_to"] = max(out["my_min_hp"] + 1,
+                                   min(int(body.get("my_recover_to", cur["my_recover_to"])), 100))
+        out["sec_per_hp"] = max(5, min(int(body.get("sec_per_hp", cur["sec_per_hp"])), 600))
+        out["regen_auto"] = bool(body.get("regen_auto", cur["regen_auto"]))
+        out["auto_kazna"] = bool(body.get("auto_kazna", cur["auto_kazna"]))
+        out["auto_defense"] = bool(body.get("auto_defense", cur["auto_defense"]))
+        out["pierce_defenses"] = bool(body.get("pierce_defenses", cur["pierce_defenses"]))
     except (TypeError, ValueError):
         return False
-    # здравые рамки: игровой минимум HP — 20; лечиться нужно выше порога
-    mn = max(20, min(mn, 100))
-    rec = max(mn + 1, min(rec, 100))
     try:
         with open(path("smash_settings.json"), "w", encoding="utf-8") as f:
-            json.dump({"my_min_hp": mn, "my_recover_to": rec}, f, ensure_ascii=False, indent=2)
+            json.dump(out, f, ensure_ascii=False, indent=2)
         return True
     except OSError:
         return False
@@ -527,6 +537,11 @@ def build_args(mid, action, fields):
         # holop_raid.py без --attack = ТОЛЬКО собрать список ников (не бьёт)
         args = ["--want", str(int(f.get("want") or 10)),
                 "--pages", str(int(f.get("pages") or 6))]
+        if (f.get("skip_def") or "Да").strip().lower().startswith("да"):
+            args.append("--skip-defended")
+        md = int(f.get("max_def") or 0)
+        if md > 0:
+            args += ["--max-def", str(md)]
         return args + (["--dry-run"] if action == "dry" else [])
     if mid == "scout":
         if action == "clear":
@@ -886,7 +901,17 @@ function render(mid){
         <input id="set_min_hp" type="number" min="20" max="100">
         <label>Лечиться до HP</label>
         <input id="set_recover" type="number" min="21" max="100">
-        <button class="b-blue" style="margin-top:8px" onclick="saveSettings()">💾 Сохранить настройки</button>
+        <label>Реген: секунд на 1 HP (меньше = быстрее)</label>
+        <input id="set_sec_hp" type="number" min="5" max="600">
+        <label style="display:flex;align-items:center;gap:7px;margin-top:8px;cursor:pointer">
+          <input id="set_regen_auto" type="checkbox" style="width:auto"> Авто-реген (считать по бонусам с главной)</label>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+          <input id="set_auto_kazna" type="checkbox" style="width:auto"> 🏦 Авто-казна (сбор → депозит → реинвест)</label>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+          <input id="set_auto_defense" type="checkbox" style="width:auto"> 🛡️ Авто-оборона (ров + частокол активны + запас)</label>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+          <input id="set_pierce" type="checkbox" style="width:auto"> 🧱 Пробивать ров/частокол у целей (иначе — пропускать)</label>
+        <button class="b-blue" style="margin-top:10px" onclick="saveSettings()">💾 Сохранить настройки</button>
         <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
       </div></div>`;
   } else {
@@ -987,14 +1012,26 @@ async function saveTargets(){ const t=$('#targets'); if(!t)return;
 }
 async function loadSettings(){
   try{ const d=await (await fetch('/api/raids/settings')).json();
-    const a=$('#set_min_hp'), b=$('#set_recover');
+    const a=$('#set_min_hp'), b=$('#set_recover'), c=$('#set_sec_hp'),
+          ra=$('#set_regen_auto'), ak=$('#set_auto_kazna');
     if(a && document.activeElement!==a) a.value=d.my_min_hp;
     if(b && document.activeElement!==b) b.value=d.my_recover_to;
+    if(c && document.activeElement!==c) c.value=d.sec_per_hp;
+    if(ra) ra.checked=!!d.regen_auto;
+    if(ak) ak.checked=!!d.auto_kazna;
+    const ad=$('#set_auto_defense'); if(ad) ad.checked=!!d.auto_defense;
+    const pd=$('#set_pierce'); if(pd) pd.checked=(d.pierce_defenses!==false);
+    if(c) c.disabled=!!(ra&&ra.checked);
   }catch(e){}
 }
 async function saveSettings(){
   const a=$('#set_min_hp'), b=$('#set_recover'); if(!a||!b) return;
-  const body={my_min_hp:parseInt(a.value||'25',10), my_recover_to:parseInt(b.value||'50',10)};
+  const body={my_min_hp:parseInt(a.value||'25',10), my_recover_to:parseInt(b.value||'50',10),
+    sec_per_hp:parseInt(($('#set_sec_hp')||{}).value||'60',10),
+    regen_auto:!!($('#set_regen_auto')||{}).checked,
+    auto_kazna:!!($('#set_auto_kazna')||{}).checked,
+    auto_defense:!!($('#set_auto_defense')||{}).checked,
+    pierce_defenses:!!($('#set_pierce')||{}).checked};
   try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json(); const n=$('#snote');
     if(n){ n.textContent=d.ok?'✅ настройки сохранены — применятся в ближайший цикл':'ошибка сохранения';
@@ -1016,29 +1053,40 @@ LOGIN_PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>🏰 Холоп — Вход</title>
 <style>
- :root{--bg:#16171d;--panel:#1e2028;--ink:#e8e8ea;--mut:#8a8f98;--green:#2ecc71;
-       --red:#e74c3c;--line:#2a2d36;--card:#0f1015;}
+ :root{color-scheme:light dark;
+   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,Helvetica,Arial,sans-serif;
+   --bg:#0a0a0c;--card:#1c1c1e;--elev:#2c2c2e;--ink:#f5f5f7;--mut:#9a9aa2;
+   --line:rgba(255,255,255,.10);--green:#30d158;--red:#ff453a;--blue:#0a84ff;
+   --shadow:0 24px 60px rgba(0,0,0,.55),0 1px 0 rgba(255,255,255,.05) inset;}
+ @media (prefers-color-scheme:light){:root{--bg:#f2f2f7;--card:#fff;--elev:#fff;--ink:#1d1d1f;--mut:#6e6e73;
+   --line:rgba(0,0,0,.10);--green:#34c759;--red:#ff3b30;--blue:#007aff;--shadow:0 24px 60px rgba(0,0,0,.14);}}
  *{box-sizing:border-box}
- body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-      background:var(--bg);color:var(--ink);
-      font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
- .box{width:360px;max-width:92vw;background:var(--panel);border:1px solid var(--line);
-      border-radius:16px;padding:26px 24px}
- h1{font-size:20px;margin:0 0 4px;font-weight:800}
- .sub{color:var(--mut);font-size:13px;margin:0 0 18px}
- label{display:block;color:var(--mut);font-size:12px;margin:12px 0 5px}
- input{width:100%;background:var(--card);color:var(--ink);border:1px solid var(--line);
-       border-radius:9px;padding:11px;font:16px inherit}
- button{width:100%;margin-top:16px;font:700 15px inherit;border:0;border-radius:10px;
-        padding:12px;cursor:pointer;color:#fff;background:var(--green)}
- button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:default}
- .link{margin-top:12px;text-align:center;color:var(--mut);font-size:13px;cursor:pointer}
+ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+   color:var(--ink);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;
+   font:15px/1.5 var(--font);
+   background:radial-gradient(900px 500px at 50% -10%,color-mix(in srgb,var(--blue) 16%,transparent),transparent 60%),var(--bg)}
+ .box{width:380px;max-width:94vw;background:var(--card);border:.5px solid var(--line);
+   border-radius:22px;padding:30px 26px;box-shadow:var(--shadow)}
+ h1{font-size:22px;margin:0 0 5px;font-weight:680;letter-spacing:-.025em}
+ .sub{color:var(--mut);font-size:13.5px;margin:0 0 20px;line-height:1.45}
+ label{display:block;color:var(--mut);font-size:12px;font-weight:510;margin:14px 0 5px}
+ input{width:100%;background:color-mix(in srgb,var(--elev) 60%,transparent);color:var(--ink);
+   border:.5px solid var(--line);border-radius:12px;padding:13px;font:16px var(--font);outline:none;
+   transition:border-color .18s,box-shadow .18s}
+ input:focus{border-color:var(--blue);box-shadow:0 0 0 4px color-mix(in srgb,var(--blue) 22%,transparent)}
+ button{width:100%;margin-top:18px;font:600 15px var(--font);letter-spacing:-.01em;border:0;border-radius:13px;
+   padding:14px;cursor:pointer;color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);
+   background:linear-gradient(180deg,color-mix(in srgb,var(--green) 90%,#fff),var(--green));
+   transition:transform .09s ease,filter .15s}
+ button:hover{filter:brightness(1.07)} button:active{transform:scale(.985)} button:disabled{opacity:.5;cursor:default}
+ .link{margin-top:14px;text-align:center;color:var(--mut);font-size:13px;cursor:pointer}
  .link:hover{color:var(--ink)}
- .note{color:var(--mut);font-size:12px;min-height:18px;margin-top:12px}
+ .note{color:var(--mut);font-size:12.5px;min-height:18px;margin-top:12px}
  .note.err{color:var(--red)} .note.ok{color:var(--green)}
- .safe{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);
-       color:var(--mut);font-size:12px;line-height:1.5}
+ .safe{margin-top:20px;padding-top:16px;border-top:.5px solid var(--line);
+   color:var(--mut);font-size:12px;line-height:1.55}
  .hide{display:none}
+ @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body>
 <div class="box">
   <h1>🏰 Вход в Холоп</h1>
