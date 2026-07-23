@@ -6,6 +6,7 @@ config.json
 # логи и служебные файлы
 startup_log.txt
 hub_error.log
+update_log.txt
 *.log
 *.out
 *.pid

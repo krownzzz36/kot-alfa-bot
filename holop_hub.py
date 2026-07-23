@@ -28,7 +28,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.21-8"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.23-1"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -484,7 +484,7 @@ def save_donate(text):
 # ─────────────── настройки боя (smash_settings.json) ───────────────
 SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
-                           "pierce_defenses": True, "hit_shields": False}
+                           "pierce_defenses": True, "hit_shields": True}
 
 
 def load_smash_settings():
@@ -948,7 +948,7 @@ function render(mid){
         <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
           <input id="set_pierce" type="checkbox" style="width:auto"> 🧱 Пробивать ров/частокол у целей (иначе — пропускать)</label>
         <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_hit_shields" type="checkbox" style="width:auto"> 🏹 Бить щитников требушетами (Купол/Стена) — тратит требушет за КАЖДЫЙ удар!</label>
+          <input id="set_hit_shields" type="checkbox" style="width:auto"> 🏹 Сносить донат-щит требушетом и фармить (ВКЛ). Выкл — беречь требушеты, щитников пропускать</label>
         <button class="b-blue" style="margin-top:10px" onclick="saveSettings()">💾 Сохранить настройки</button>
         <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
       </div></div>`;

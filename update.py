@@ -17,6 +17,17 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ZIP = "https://github.com/krownzzz36/kot-alfa-bot/archive/refs/heads/main.zip"
 
+
+def _log(msg):
+    """Печать в консоль + строка в update_log.txt (чтобы друг мог прислать, если обнова не доехала)."""
+    print(msg)
+    try:
+        import time
+        with open(os.path.join(HERE, "update_log.txt"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  " + msg + "\n")
+    except OSError:
+        pass
+
 # обновляем только код и документацию — НЕ трогаем личные файлы и запускалки
 UPDATE_EXT = (".py", ".md")
 UPDATE_EXACT = {"requirements.txt", ".gitattributes"}
@@ -47,11 +58,11 @@ def _fetch(url):
 
 def main():
     try:
-        print("🔄 Проверяю обновления на GitHub…")
+        _log("🔄 Проверяю обновления на GitHub…")
         data = _fetch(REPO_ZIP)
         zf = zipfile.ZipFile(io.BytesIO(data))
     except Exception as e:
-        print(f"   обновление пропущено (нет связи/битый архив): {e}")
+        _log(f"   ⚠️ обновление ПРОПУЩЕНО (нет связи/битый архив): {type(e).__name__}: {e}")
         return
 
     names = zf.namelist()
@@ -80,16 +91,16 @@ def main():
                     f.write(content)
                 updated += 1
             except OSError as e:
-                print(f"   не смог обновить {rel}: {e}")
+                _log(f"   ⚠️ не смог обновить {rel}: {e}")
 
     if updated:
-        print(f"✅ Обновлено файлов: {updated}. Запускаю свежую версию.")
+        _log(f"✅ Обновлено файлов: {updated}. Запускаю свежую версию.")
     else:
-        print("✅ У тебя уже последняя версия.")
+        _log("✅ У тебя уже последняя версия.")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"   апдейтер пропущен: {e}")
+        _log(f"   ⚠️ апдейтер упал целиком: {type(e).__name__}: {e}")
