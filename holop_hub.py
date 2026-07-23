@@ -853,7 +853,8 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    transition:border-color .18s,box-shadow .18s;-webkit-appearance:none;appearance:none}
  input:focus,select:focus,textarea:focus{border-color:var(--blue);
    box-shadow:0 0 0 3.5px color-mix(in srgb,var(--blue) 22%,transparent)}
- input[type=checkbox]{width:18px;height:18px;accent-color:var(--blue);vertical-align:-3px}
+ input[type=checkbox]{width:18px;height:18px;min-width:18px;padding:0;border:0;border-radius:0;
+   -webkit-appearance:checkbox;appearance:auto;accent-color:var(--blue);vertical-align:-3px;cursor:pointer}
  textarea{font:13px/1.55 var(--mono);resize:vertical}
  button{font:590 14px var(--font);letter-spacing:-.01em;border:0;border-radius:var(--radius-sm);
    padding:10px 15px;cursor:pointer;color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.18);
