@@ -91,7 +91,10 @@ UI = {
 
     # — РАЗЖАБ: снять охрану зельем жаб ИЗ ЗАПАСА (покупку за ⭐ НЕ жмём) —
     # (проверено по скринам Ксюши 23.07.2026 — если игра сменит строки, правь ТУТ)
-    "defroggable":       ("охрана", "зелье жаб", "купи 🧪"),  # статусы, которые снимает зелье жаб
+    # Ксюша (голосом 23.07): защиты, которые мешают забрать после выгона и снимаются зельем —
+    # железный купол, полевой (щит), закрыть границу. Плюс обычная «охрана».
+    "defroggable":       ("охрана", "зелье жаб", "купи 🧪",
+                          "купол", "полев", "границ"),      # статусы, которые снимает зелье жаб
     #   NB: «княжий щит» снимается 💣 (не зельем), «соклановец»/«кандал» — вообще никак
     "potion_use_words":  ("зелье жаб", "разжаб", "снять охрану", "🐸"),  # кнопка «применить зелье»
     "potion_buy_words":  ("купить",),       # покупка за ⭐ — НИКОГДА не жмём
@@ -105,7 +108,8 @@ UI = {
 
     # — стоп-статусы холопа в результатах поиска (нельзя захватить бесплатно) —
     "bad_status":        ("купи 🧪", "зелье жаб", "соклановец", "княжий щит", "кандал",
-                          "охрана", "⛔", "недоступен", "нет слотов", "💣"),
+                          "охрана", "купол", "полев", "границ",
+                          "⛔", "недоступен", "нет слотов", "💣"),
 
     # — игровые кулдауны/ошибки в ответе бота —
     "cooldown_words":    ("подожд", "перезарядк", "кулдаун", "слишком часто", "ещё рано"),
@@ -138,26 +142,26 @@ INVIS = dict.fromkeys(map(ord, "⁦⁧⁨⁩‎‏"), None)
 logger = logging.getLogger("holop")
 
 
-def _utf8_stream():
-    """Поток для консоли, который НЕ падает на эмодзи (Windows cp1251).
-    Оборачиваем буфер stdout в UTF-8 с errors='replace' — пуленепробиваемо даже
-    когда reconfigure недоступен (Py3.14, перенаправленный в файл вывод из хаба)."""
-    try:
-        import io
-        return io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
-                                errors="replace", line_buffering=True)
-    except Exception:
+class _SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler, который НЕ роняет лог на эмодзи в cp1251-консоли (Windows).
+    Сам поток/буферизацию НЕ трогаем (иначе теряются строки) — просто при ошибке
+    кодировки пишем строку с заменой непечатаемых символов."""
+    def emit(self, record):
         try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-        return sys.stdout
+            super().emit(record)
+        except UnicodeEncodeError:
+            try:
+                msg = self.format(record).encode("ascii", "replace").decode("ascii")
+                self.stream.write(msg + self.terminator)
+                self.flush()
+            except Exception:
+                self.handleError(record)
 
 
 def setup_logging():
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-    sh = logging.StreamHandler(_utf8_stream())   # эмодзи в консоли не роняют реролл
+    sh = _SafeStreamHandler(sys.stdout)   # эмодзи в консоли не роняют реролл, вывод не режется
     sh.setFormatter(fmt)
     logger.addHandler(sh)
     fh = logging.FileHandler(os.path.join(HERE, "run.log"), encoding="utf-8")
