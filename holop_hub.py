@@ -463,6 +463,24 @@ def save_targets(text):
         return False
 
 
+def load_donate():
+    """Список «щитников» (донат Купол/Стена) — смашер их не бьёт, экономит требушеты."""
+    try:
+        with open(path("smash_donate.txt"), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return "# ники под донат-щитом (Купол/Стена) — бот их пропустит, требушеты не тратит\n"
+
+
+def save_donate(text):
+    try:
+        with open(path("smash_donate.txt"), "w", encoding="utf-8") as f:
+            f.write(text.rstrip("\n") + "\n")
+        return True
+    except OSError:
+        return False
+
+
 # ─────────────── настройки боя (smash_settings.json) ───────────────
 SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
@@ -707,6 +725,8 @@ class H(BaseHTTPRequestHandler):
             self._json(ui_config())
         elif p == "/api/targets":
             self._send(200, load_targets(), "text/plain; charset=utf-8")
+        elif p == "/api/donate":
+            self._send(200, load_donate(), "text/plain; charset=utf-8")
         elif p == "/api/raids/settings":
             self._json(load_smash_settings())
         elif p == "/api/status_board":
@@ -778,6 +798,8 @@ class H(BaseHTTPRequestHandler):
                 stop_night(); return self._json({"ok": True})
             if mid == "raids" and action == "save":
                 return self._json({"ok": save_targets(raw if not body else body.get("text", ""))})
+            if mid == "raids" and action == "save_donate":
+                return self._json({"ok": save_donate(raw if not body else body.get("text", ""))})
             if mid == "raids" and action == "settings":
                 return self._json({"ok": save_smash_settings(body)})
             if action == "run":
@@ -904,6 +926,10 @@ function render(mid){
       <label>🎯 Цели (ник в строке)</label><textarea id="targets" rows="10" spellcheck="false"></textarea>
       <button class="b-blue" onclick="saveTargets()">💾 Сохранить список</button>
       <div class="note" id="note"></div>
+      <label style="margin-top:10px">🛡️ Щитники — НЕ бить (донат Купол/Стена)</label>
+      <textarea id="donate" rows="4" spellcheck="false" placeholder="ник в строке — бот их пропустит, требушеты не потратит"></textarea>
+      <button class="b-blue" onclick="saveDonate()">💾 Сохранить щитников</button>
+      <div class="note" id="dnote">Впиши тех, у кого донат-щит (Купол/Стена) — бот их не тронет. Бот и сам заносит сюда, кого распознал (1 требушет на распознавание).</div>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
         <div style="font-weight:700;font-size:13px;margin-bottom:2px">⚔️ Настройки боя</div>
         <label>Воевать, пока моё HP выше (иначе — лечиться)</label>
@@ -946,7 +972,7 @@ function render(mid){
   }
   main.innerHTML=`<p class="desc">${m.desc||''} <span id="mpill"></span></p>
     <div class="row"><div class="col-log"><pre class="log" id="log">…</pre></div>${side}</div>`;
-  if(m.kind==='loop'){ loadTargets(); loadSettings(); }
+  if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
 }
 let nightOn=false;
@@ -1023,6 +1049,11 @@ async function loadTargets(){ try{const r=await fetch('/api/targets');const t=$(
 async function saveTargets(){ const t=$('#targets'); if(!t)return;
   try{await fetch('/api/raids/save',{method:'POST',body:t.value});
     const n=$('#note'); if(n){n.textContent='✅ сохранено (применится в ближайшую минуту)'; setTimeout(()=>n.textContent='',6000);} }catch(e){}
+}
+async function loadDonate(){ try{const r=await fetch('/api/donate');const t=$('#donate'); if(t) t.value=await r.text();}catch(e){} }
+async function saveDonate(){ const t=$('#donate'); if(!t)return;
+  try{await fetch('/api/raids/save_donate',{method:'POST',body:t.value});
+    const n=$('#dnote'); if(n){n.textContent='✅ щитники сохранены (применится в ближайшую минуту)'; setTimeout(()=>n.textContent='',6000);} }catch(e){}
 }
 async function loadSettings(){
   try{ const d=await (await fetch('/api/raids/settings')).json();
