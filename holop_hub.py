@@ -759,6 +759,11 @@ class H(BaseHTTPRequestHandler):
                 if parts[2] == "password":
                     r = AUTH.sign_in(password=(body.get("password") or ""))
                     return self._json({"ok": True, "need": r})
+                if parts[2] == "logout":
+                    cfg = load_cfg()
+                    cfg.pop("session_string", None)   # стираем вход → откроется экран входа
+                    save_cfg(cfg)
+                    return self._json({"ok": True})
             except Exception as e:
                 return self._json({"ok": False, "err": _auth_err(e)})
         if len(parts) == 3 and parts[0] == "api":
@@ -862,7 +867,8 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
  @media (max-width:640px){.row{flex-direction:column}.side{width:auto}main{padding:12px}}
 </style></head><body>
 <header><h1>🏰 Холоп — Пульт <span style="color:#8a8f98;font-size:11px;font-weight:400">v__VERSION__</span></h1><div id="tabs"></div>
-<button class="b-red" style="margin-left:auto" onclick="stopAll()" title="Остановить ВСЕ боты разом">🛑 Стоп-кран</button></header>
+<button class="b-grey" style="margin-left:auto" onclick="logout()" title="Выйти и войти заново (если Telegram отозвал сессию)">👤 Сменить аккаунт</button>
+<button class="b-red" onclick="stopAll()" title="Остановить ВСЕ боты разом">🛑 Стоп-кран</button></header>
 <main id="main"></main>
 <script>
 const $=s=>document.querySelector(s);
@@ -994,6 +1000,11 @@ async function pollStatus(){
   }catch(e){}
 }
 async function post(mid,action){ try{await fetch('/api/'+mid+'/'+action,{method:'POST'});}catch(e){} pollMod(); }
+async function logout(){
+  if(!confirm('Выйти и войти заново? Списки целей и настройки останутся — попросит только номер и код из Telegram. Делай так, если Telegram отозвал сессию (VPN сменил IP / два запуска).')) return;
+  try{ await fetch('/api/auth/logout',{method:'POST'}); }catch(e){}
+  location.reload();
+}
 async function stopAll(){
   if(!confirm('Остановить ВСЕ боты (набеги, пещеры, всё)? Пульт останется открыт.')) return;
   try{ await fetch('/api/stop_all',{method:'POST'}); }catch(e){}
