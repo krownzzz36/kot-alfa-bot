@@ -446,6 +446,7 @@ class Smasher:
                 pass
         # флаги авто-казны и авто-обороны
         self._auto_kazna = bool(data.get("auto_kazna", getattr(self, "_auto_kazna", False)))
+        self._bank_gold = bool(data.get("bank_gold", getattr(self, "_bank_gold", False)))  # класть ли золото в казну (деф нет — только серебро)
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._hit_shields = bool(data.get("hit_shields", getattr(self, "_hit_shields", True)))
@@ -740,7 +741,10 @@ class Smasher:
             await self.click_text(hol, "Собрать", label="Собрать золото")
             await asyncio.sleep(1.0)
         await self._bank_currency("Серебро")
-        await self._bank_currency("Золото")
+        if getattr(self, "_bank_gold", False):
+            await self._bank_currency("Золото")   # только если включена галочка «класть золото в казну»
+        else:
+            log("  💰 золото НЕ кладу в казну (галочка выкл) — оставляю свободным на оборону/покупки")
         self._last_bank = time.time()
         self._next_bank = time.time() + 3600 + random.uniform(-600, 600)   # раз в ~час ± 10 мин
         log("🏦 Авто-казна: готово.")
