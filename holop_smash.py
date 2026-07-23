@@ -401,6 +401,7 @@ class Smasher:
         self._next_defense = 0.0      # когда следующий раз проверять оборону
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
         self._pierce_defenses = True  # пробивать ров/частокол (True) или пропускать (False)
+        self._hit_shields = False     # бить донат-щитников требушетами (True) или скипать навсегда (False)
         self._last_tl_warn = 0.0      # троттл лога про нераспознанные анимации @holop
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
         self.stats.update({"bombs": 0, "defused": 0, "exploded": 0,
@@ -447,6 +448,7 @@ class Smasher:
         self._auto_kazna = bool(data.get("auto_kazna", getattr(self, "_auto_kazna", False)))
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
+        self._hit_shields = bool(data.get("hit_shields", getattr(self, "_hit_shields", False)))
 
     def ensure_targets_file(self):
         """Если файла целей нет — создать с текущим списком (чтобы панель могла его показать)."""
@@ -1077,6 +1079,14 @@ class Smasher:
             # ДОНАТ-ЗАЩИТА (Железный Купол/Стена) — жрёт требушеты, снимаем НАВСЕГДА
             if outcome == "donate":
                 self.stats["hits"] += 1
+                if self._hit_shields:
+                    # «бить щитников» вкл — фармим донатчика ТРЕБУШЕТАМИ (по требушету за удар!)
+                    cd = s["attack_cd"] + random.uniform(s["jitter_lo"], s["jitter_hi"])
+                    self.next_ok[name] = self._spread(time.time() + cd, name)
+                    log(f"  🏹 {name}: донат-щит (Купол/Стена) — пробиваю ТРЕБУШЕТОМ "
+                        f"(«бить щитников» вкл — требушет за КАЖДЫЙ удар!), "
+                        f"КД {fmt_secs(self.next_ok[name] - time.time())}")
+                    return my_after
                 self.donate_add(name)
                 self.next_ok[name] = time.time() + 10 ** 9   # не вернётся в этой сессии
                 log(f"  🛡️ {name}: ДОНАТНАЯ защита (Купол/Стена) — снял НАВСЕГДА "

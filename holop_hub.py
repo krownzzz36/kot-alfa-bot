@@ -484,7 +484,7 @@ def save_donate(text):
 # ─────────────── настройки боя (smash_settings.json) ───────────────
 SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
-                           "pierce_defenses": True}
+                           "pierce_defenses": True, "hit_shields": False}
 
 
 def load_smash_settings():
@@ -514,6 +514,7 @@ def save_smash_settings(body):
         out["auto_kazna"] = bool(body.get("auto_kazna", cur["auto_kazna"]))
         out["auto_defense"] = bool(body.get("auto_defense", cur["auto_defense"]))
         out["pierce_defenses"] = bool(body.get("pierce_defenses", cur["pierce_defenses"]))
+        out["hit_shields"] = bool(body.get("hit_shields", cur["hit_shields"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -946,6 +947,8 @@ function render(mid){
           <input id="set_auto_defense" type="checkbox" style="width:auto"> 🛡️ Авто-оборона (ров + частокол активны + запас)</label>
         <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
           <input id="set_pierce" type="checkbox" style="width:auto"> 🧱 Пробивать ров/частокол у целей (иначе — пропускать)</label>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
+          <input id="set_hit_shields" type="checkbox" style="width:auto"> 🏹 Бить щитников требушетами (Купол/Стена) — тратит требушет за КАЖДЫЙ удар!</label>
         <button class="b-blue" style="margin-top:10px" onclick="saveSettings()">💾 Сохранить настройки</button>
         <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
       </div></div>`;
@@ -1066,6 +1069,7 @@ async function loadSettings(){
     if(ak) ak.checked=!!d.auto_kazna;
     const ad=$('#set_auto_defense'); if(ad) ad.checked=!!d.auto_defense;
     const pd=$('#set_pierce'); if(pd) pd.checked=(d.pierce_defenses!==false);
+    const hs=$('#set_hit_shields'); if(hs) hs.checked=!!d.hit_shields;
     if(c) c.disabled=!!(ra&&ra.checked);
   }catch(e){}
 }
@@ -1076,7 +1080,8 @@ async function saveSettings(){
     regen_auto:!!($('#set_regen_auto')||{}).checked,
     auto_kazna:!!($('#set_auto_kazna')||{}).checked,
     auto_defense:!!($('#set_auto_defense')||{}).checked,
-    pierce_defenses:!!($('#set_pierce')||{}).checked};
+    pierce_defenses:!!($('#set_pierce')||{}).checked,
+    hit_shields:!!($('#set_hit_shields')||{}).checked};
   try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json(); const n=$('#snote');
     if(n){ n.textContent=d.ok?'✅ настройки сохранены — применятся в ближайший цикл':'ошибка сохранения';
