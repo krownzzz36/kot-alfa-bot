@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-14"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-15"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -1344,7 +1344,7 @@ function render(mid){
   main.innerHTML=head+`<div class="workspace"><div class="controls">${ctl}</div>
     <section class="console"><div class="console-bar"><span class="live">LIVE</span>
       <span class="console-name">Журнал — ${m.title}</span>
-      <span class="console-meta">новые сверху</span></div>
+      <span class="console-meta">новые снизу</span></div>
       <pre class="log" id="log">…</pre></section></div>`;
   if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
@@ -1362,11 +1362,11 @@ async function pollMod(){
       nb.className='b-night'+(nightOn?' on':'');
       nb.textContent=nightOn?'🌙 Ночной режим: ВКЛ':'🌙 Ночной режим'; }
     const log=$('#log'); if(log){
-      // ИНВЕРСИЯ: новые строки СВЕРХУ, старые уходят вниз. Держим скролл у верха,
-      // если пользователь его не увёл вниз читать историю.
-      const atTop=log.scrollTop<26;
-      const txt=(d.log||'(пусто)').replace(/\n+$/,'').split('\n').reverse().join('\n');
-      if(log.textContent!==txt){ log.textContent=txt; if(atTop) log.scrollTop=0; }
+      // обычный порядок: старые сверху, новые снизу. Держим скролл внизу,
+      // если пользователь сам не увёл его вверх читать историю.
+      const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<40;
+      const txt=(d.log||'(пусто)').replace(/\n+$/,'');
+      if(log.textContent!==txt){ log.textContent=txt; if(atBottom) log.scrollTop=log.scrollHeight; }
     }
   }catch(e){}
   loadResults();
@@ -1539,7 +1539,7 @@ const GUIDE_SECTIONS=[
    <li><b>«Ключ отозван» / вылет сессии:</b> VPN сменил страну на ходу. Зафиксируй одну страну, жми «Сменить аккаунт».</li>
    <li>Не помогло — нажми кнопку ниже и пришли скачанный файл в чат. В нём все логи разом (пароля и ключа аккаунта там нет).</li></ul>
    <p><a class="dl-logs" href="/api/logs" download="kot-alfa-logs.txt">📥 Скачать логи для поддержки</a></p>
-   <p><i>Журнал теперь идёт новыми строками сверху.</i></p>`],
+   <p><i>Журнал идёт обычным порядком: новые строки снизу.</i></p>`],
 ];
 const GUIDE_HTML=`<div class="guide">
   <div class="guide-lead">Пульт живёт и обновляется — этот гайд обновляется вместе с ним. Разверни любой раздел.</div>
