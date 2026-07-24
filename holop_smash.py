@@ -747,16 +747,27 @@ class Smasher:
         return None
 
     async def my_current_hp(self):
-        """Надёжно прочитать МОИ HP с экрана «Территория» (❤️ Здоровье: X/100). None если не смог."""
-        await self.send("Территория")
-        for _ in range(12):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
+        """Прочитать МОИ HP с экрана «Территория» (❤️ Здоровье: X/100). None если не смог.
+        Берём ТОЛЬКО СВЕЖИЙ ответ (id/правка ПОСЛЕ нашего запроса) — иначе хватали старое
+        сообщение и «видели 78, а считали от 75» (замечание Максима)."""
+        sent = await self.send("Территория")
+        floor = getattr(sent, "id", 0) or 0
+        for _ in range(14):
+            await rsleep(0.5)
+            for m in sorted(await self.recent(8), key=lambda x: x.id, reverse=True):
                 if m.out:
                     continue
                 t = m.message or ""
-                if "ТЕРРИТОРИЯ" in t and ("Здоровье" in t or "Жизни" in t):
+                if "ТЕРРИТОРИЯ" not in t or not ("Здоровье" in t or "Жизни" in t):
+                    continue
+                edited = bool(getattr(m, "edit_date", None))
+                if m.id > floor or edited:          # новое сообщение ИЛИ свежая правка
                     return parse_my_low_hp(t)
-            await rsleep(0.5)
+        # свежий ответ не пришёл — вернём хотя бы последнее прочитанное (лучше, чем None)
+        for m in sorted(await self.recent(8), key=lambda x: x.id, reverse=True):
+            t = m.message or ""
+            if not m.out and "ТЕРРИТОРИЯ" in t and ("Здоровье" in t or "Жизни" in t):
+                return parse_my_low_hp(t)
         return None
 
     async def open_territory(self):
@@ -1910,15 +1921,19 @@ class Smasher:
                 self._healing = False
                 log("❤️ Потолок лечения истёк — пробую продолжить (проверю HP в бою).")
             else:
-                rem = max(1.0, (s["my_recover_to"] - (hp or 0)) * s["min_per_hp"])
-                shown = str(hp) if hp is not None else "?"
-                # спим до почти-цели, но перечитываем заметно чаще (потолок 4 мин) и с рандомом
-                nap = rem * 60.0 * 0.85 * random.uniform(0.85, 1.15)
                 left_hp = s["my_recover_to"] - (hp or 0)
-                cap = 90.0 if left_hp <= 5 else 240.0   # почти долечился — проверяем чаще
-                nap = max(45.0, min(nap, cap))
-                log(f"🩶 Лечусь: HP {shown}, до {s['my_recover_to']} ~{rem:.0f}м "
-                    f"(~{s['min_per_hp']*60:.0f} с/HP) — перечитаю через {nap:.0f}с")
+                rem_min = max(1.0, left_hp * s["min_per_hp"])            # оценка минут до полного
+                rem_s = rem_min * 60.0
+                shown = str(hp) if hp is not None else "?"
+                # спим ЧАСТЬ оставшегося (проснёмся ДО цели и перечитаем реальное HP),
+                # потолок ~5 мин. РАНДОМ ПОСЛЕ потолка — чтобы интервалы НЕ совпадали
+                # (Максим: «идеально одинаковое КД — палево»). Далеко от цели — интервал
+                # длиннее, у самой цели — короче.
+                base = rem_s * random.uniform(0.45, 0.7)
+                base = min(base, 90.0 if left_hp <= 4 else 300.0)
+                nap = round(max(40.0, base) * random.uniform(0.82, 1.18))  # ← разброс на потолке
+                log(f"🩶 Лечусь: HP {shown}, до {s['my_recover_to']} ~{rem_min:.0f}м "
+                    f"(~{s['min_per_hp']*60:.0f} с/HP) — перечитаю через {nap}с")
                 return await self.sleep_gated(nap)
         arena = await self.open_arena()
         if not arena:

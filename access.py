@@ -8,61 +8,74 @@
      состоишь ли в данной группе. Если нет — дальше не работать.»
 Сервер не нужен, чужие сессии нигде не хранятся — проверка идёт локально.
 
-ЧЕСТНО: это «защита от дурака» (формулировка Алексея). Код лежит на машине
-пользователя, кто умеет — вырежет проверку. Но от «переслал архив кому попало»
-спасает, а это и есть главный риск: чем шире расходится, тем выше шанс, что
-игра заметит и прикроет лавочку.
+ЧЕСТНО: это «защита от дурака» (формулировка Алексея). Кто умеет — вырежет.
+Смысл — от «переслал архив кому попало», а не от хакеров.
 
-ПОЛЯРНОСТЬ ПРОВЕРКИ (важно): пускаем ТОЛЬКО если членство ПОДТВЕРЖДЕНО.
-Любая невнятная ошибка = не подтвердили = не пускаем. Свободный проход даём
-лишь при явных проблемах СЕТИ, чтобы обрыв связи не ронял ботов всем сразу.
+═══ ПОЛЯРНОСТЬ: FAIL-OPEN (важно!) ═══
+Блокируем ТОЛЬКО когда Telegram ЯВНО ответил «ты не участник» (UserNotParticipant).
+ЛЮБАЯ другая заминка (нет связи, не резолвится группа, обрыв на середине, чужой
+формат id, тайм-аут) → ПУСКАЕМ. Причина: раньше было наоборот («пускаем только
+при подтверждении»), и у Ксюши с Кариной на нестабильной сети проверка падала не
+с сетевой ошибкой → бот их БЛОКИРОВАЛ («бот не работает у обеих»). Ложно рубить
+своих — хуже, чем изредка пропустить чужого.
 """
 
 GROUP_ID = -5160104813                       # закрытая группа тестеров
-GROUP_HINT = "Альфа-тестеры бота холопа"     # для понятного сообщения
+GROUP_HINT = "Альфа-тестеры бота холопа"      # для понятного сообщения
 
 DENY_MESSAGE = (
     f"🔒 ДОСТУП ЗАКРЫТ. Этот бот работает только у участников «{GROUP_HINT}». "
     f"Твой аккаунт в этой группе не найден. Если это ошибка — напиши владельцу, тебя добавят."
 )
 
-_NET_ERRORS = (ConnectionError, TimeoutError, OSError)
 
-
-async def _probe_permissions(client):
-    """Прямой способ: спросить свои права в группе. Не участник → упадёт."""
-    await client.get_permissions(GROUP_ID, "me")
-    return True
-
-
-async def _probe_dialogs(client):
-    """Запасной способ: группа должна быть в списке диалогов участника."""
-    async for d in client.iter_dialogs():
-        if d.id == GROUP_ID:
-            return True
-    return False
+async def _is_member(client):
+    """Вернуть True/False/None: участник / ТОЧНО не участник / не смогли выяснить.
+    None ⇒ пускаем (fail-open)."""
+    # get_permissions('me') → ChatPermissions если участник, UserNotParticipantError если нет.
+    try:
+        from telethon.errors import UserNotParticipantError
+    except Exception:
+        UserNotParticipantError = ()
+    try:
+        await client.get_permissions(GROUP_ID, "me")
+        return True                       # подтверждённый участник
+    except Exception as e:
+        if UserNotParticipantError and isinstance(e, UserNotParticipantError):
+            pass                           # это ЯВНОЕ «не участник» — но перепроверим диалогами
+        # иначе — резолв/сеть/квота: не смогли выяснить, НЕ блокируем
+    # запасной, самый надёжный признак: группа есть в списке диалогов участника.
+    try:
+        async for d in client.iter_dialogs(limit=None):
+            try:
+                if d.id == GROUP_ID or getattr(d.entity, "id", None) in (GROUP_ID, abs(GROUP_ID)):
+                    return True
+            except Exception:
+                continue
+        return False                       # прошли ВСЕ диалоги, группы нет → точно не участник
+    except Exception:
+        return None                        # обрыв на середине / нет связи → не выяснили → пускаем
 
 
 async def check_access(client):
-    """(allowed, message). Пускаем только при ПОДТВЕРЖДЁННОМ членстве."""
-    net_err = None
-    for probe in (_probe_permissions, _probe_dialogs):
-        try:
-            if await probe(client):
-                return True, ""
-        except _NET_ERRORS as e:
-            net_err = e                    # проблема связи — запомним, решим в конце
-        except Exception:
-            pass                           # этим способом не подтвердилось — пробуем следующий
-    if net_err is not None:
-        return True, (f"⚠️ нет связи для проверки доступа ({type(net_err).__name__}) — "
-                      f"продолжаю работу")
-    return False, DENY_MESSAGE
+    """(allowed, message). Fail-open: блок только при ТОЧНОМ «не участник»."""
+    try:
+        res = await _is_member(client)
+    except Exception as e:
+        return True, f"⚠️ проверку доступа пропустил ({type(e).__name__}) — продолжаю работу"
+    if res is True:
+        return True, ""
+    if res is None:
+        return True, "⚠️ не смог проверить доступ (нет связи) — продолжаю работу"
+    return False, DENY_MESSAGE             # res is False → точно не участник
 
 
 async def enforce_access(client, log_fn=print):
     """Проверить доступ и вернуть True/False. Сообщение печатаем через log_fn."""
-    allowed, msg = await check_access(client)
+    try:
+        allowed, msg = await check_access(client)
+    except Exception:
+        return True                        # что бы ни случилось — не рубим своих
     if msg:
         log_fn(msg)
     return allowed
