@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-6"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-7"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -897,12 +897,21 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    --bg:#1f1830;--panel:#292140;--panel2:#2e2649;--elev:#372d55;
    --ink:#f0eafa;--mut:#b2a6ce;--faint:#7b7098;--line:rgba(185,160,255,.10);--line2:rgba(185,160,255,.055);
    --accent:#e6873a;--blue:#e6873a;--green:#3fbe86;--red:#f05a6b;--grey:#372d55;--purple:#9b7be6;--amber:#e6873a;
+   --cat:#e6873a;   /* цвет шерсти кота — в чёрной теме тёмный */
    --shadow:0 1px 2px rgba(0,0,0,.32),0 20px 46px -16px rgba(0,0,0,.6);}
- @media (prefers-color-scheme:light){:root{
+ @media (prefers-color-scheme:light){:root:not([data-theme]){
    --bg:#efe9f9;--panel:#ffffff;--panel2:#f7f3fd;--elev:#ffffff;--ink:#2a2340;--mut:#6f6690;--faint:#a79fc4;
    --line:rgba(110,80,190,.10);--line2:rgba(110,80,190,.05);
    --accent:#d9772a;--blue:#d9772a;--green:#1fa877;--red:#e24a5c;--grey:#efe9fb;--purple:#7c5cf5;--amber:#c07020;
+   --cat:#d9772a;
    --shadow:0 1px 2px rgba(60,40,110,.06),0 18px 40px -14px rgba(80,55,150,.16);}}
+ /* 🌑 МАКСИМАЛЬНО ЧЁРНАЯ ТЕМА (по переключателю) — кот-ниндзя, всё чёрное, читаемо */
+ :root[data-theme="black"]{color-scheme:dark;
+   --bg:#000000;--panel:#0a0a0d;--panel2:#101015;--elev:#17171d;
+   --ink:#eef0f5;--mut:#969aa6;--faint:#5f616b;--line:rgba(255,255,255,.10);--line2:rgba(255,255,255,.05);
+   --accent:#5b9dff;--blue:#5b9dff;--green:#37c98a;--red:#ff5a6b;--grey:#17171d;--purple:#8f7bff;--amber:#5b9dff;
+   --cat:#3b3b45;
+   --shadow:0 1px 2px #000,0 24px 52px -16px #000;}
  *{box-sizing:border-box}
  html{-webkit-text-size-adjust:100%}
  body{margin:0;min-height:100vh;color:var(--ink);font:14.5px/1.5 var(--font);
@@ -1156,10 +1165,11 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 </style></head><body>
 <div class="app">
 <aside class="rail">
-  <div class="brand"><span class="brand-tile">🏰</span><span class="brand-tx">Холоп<small>ПУЛЬТ</small></span></div>
+  <div class="brand"><span class="brand-tile">🐱</span><span class="brand-tx">Кот Альфа<small>БОТ</small></span></div>
   <nav id="tabs"></nav>
   <div class="pet"><div class="pet-bubble" id="petBubble"></div><canvas id="petCat" width="26" height="26"></canvas><span class="pet-say" id="petSay">🐾 Рыжик</span></div>
   <div class="rail-foot">
+    <button id="themeBtn" class="b-grey" onclick="toggleTheme()" title="Обычная / максимально чёрная тема">🌑 Чёрная тема</button>
     <button class="b-grey" onclick="logout()" title="Выйти и войти заново (если Telegram отозвал сессию)">👤 Сменить аккаунт</button>
     <button class="b-red" onclick="stopAll()" title="Остановить ВСЕ боты разом">🛑 Стоп-кран</button>
     <div class="ver">v__VERSION__</div>
@@ -1487,6 +1497,20 @@ const GUIDE_HTML=`<div class="guide">
   </details>`).join('')}
 </div>`;
 
+function applyTheme(){
+  const black=localStorage.getItem('holop_theme')==='black';
+  if(black) document.documentElement.setAttribute('data-theme','black');
+  else document.documentElement.removeAttribute('data-theme');   // стандартная (авто свет/тьма)
+  const b=document.getElementById('themeBtn');
+  if(b) b.textContent=black?'🎨 Обычная тема':'🌑 Чёрная тема';
+}
+function toggleTheme(){
+  const black=localStorage.getItem('holop_theme')==='black';
+  localStorage.setItem('holop_theme', black?'standard':'black');
+  applyTheme();
+}
+applyTheme();   // применяем сразу, до отрисовки
+
 async function init(){
   CFG=await (await fetch('/api/config')).json();
   $('#tabs').innerHTML=CFG.map(m=>`<span class="tab" data-id="${m.id}" onclick="render('${m.id}')">${m.emoji} ${m.title}</span>`).join('');
@@ -1498,11 +1522,22 @@ async function init(){
   var say=document.getElementById('petSay'), bub=document.getElementById('petBubble');
   var runCv=document.getElementById('petRun'), runCtx=runCv&&runCv.getContext('2d');
   var railCtx=cv.getContext('2d');
-  var acc=(getComputedStyle(document.documentElement).getPropertyValue('--accent')||'').trim()||'#e6873a';
+  function cssv(n,f){ return (getComputedStyle(document.documentElement).getPropertyValue(n)||'').trim()||f; }
+  function isBlack(){ return document.documentElement.getAttribute('data-theme')==='black'; }
+  var acc=cssv('--cat', cssv('--accent','#e6873a'));
   function drk(hex,f){ var n=parseInt(hex.replace('#',''),16); return 'rgb('+Math.round(((n>>16)&255)*f)+','+Math.round(((n>>8)&255)*f)+','+Math.round((n&255)*f)+')'; }
   var P={K:'#241a1e',G:acc,D:drk(acc,.72),C:'#f3e7cf',E:'#3f9fd6',W:'#f6fbff',N:'#cf7280',I:'#e3a6ac',
     M:'#c2c7d4',Md:'#767c8f',WD:'#8a5a30',Gd:'#e8c14e',R:'#e0503a',Pu:'#9b7be6',FL:'#ffce4d',FLo:'#ff8a3a',
-    WH:'#f3f0fb',GL:'rgba(120,190,240,.9)',GR:'#4bd08a',HRT:'#ff6b81'};
+    WH:'#f3f0fb',GL:'rgba(120,190,240,.9)',GR:'#4bd08a',HRT:'#ff6b81',NB:'#d23c4e',MK:'#141419'};
+  function refreshCat(){ var c=cssv('--cat',cssv('--accent','#e6873a')); P.G=c; P.D=drk(c,.72); }
+  // 🥷 повязка ниндзя + маска — только в чёрной теме
+  function ninja(yo,dx){ var x=XO+dx;
+    rct(x+2,4+yo,15,2,P.MK);                       // тёмная основа повязки
+    rct(x+2,4+yo,15,1,P.NB);                        // красная полоса
+    px(x+16,3+yo,P.NB);px(x+17,3+yo,P.MK);          // узел
+    px(x+18,4+yo,P.NB);px(x+19,5+yo,P.MK);px(x+18,6+yo,P.NB);  // хвосты
+    rct(x+3,10+yo,12,3,P.MK);                       // маска на морду (ниже глаз)
+  }
   var S=[
     "...K............K...",
     "..KIK..........KIK..",
@@ -1553,6 +1588,7 @@ async function init(){
 
   function drawScene(ctx, cw, o){
     g=ctx; GW=cw; ctx.clearRect(0,0,cw,ctx.canvas.height);
+    refreshCat();                                   // цвет шерсти по теме (на лету)
     var id=o.id, working=o.working, sleeping=o.sleeping, ev=o.event, t=o.t;
     var ph=Math.floor(o.roam?t/4:t)%4;
     var bob=working?(ph<2?0:1):(sleeping?2:1);
@@ -1571,6 +1607,7 @@ async function init(){
     else if(id==='find'){ glass(yo); }
     else if(id&&id!=='caves'&&!o.roam){ binoc(yo); }
     if(ev&&id==='raids'){ if(ev.kind==='heal') cross(yo); if(ev.kind==='win'||ev.kind==='loot') coins(yo,t); }
+    if(isBlack()) ninja(yo,dx);                     // 🥷 в чёрной теме — кот-ниндзя
   }
 
   function label(id,working,sleeping,ev){
