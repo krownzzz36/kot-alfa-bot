@@ -408,7 +408,6 @@ class Smasher:
         self.targets_path = os.path.join(HERE, "smash_targets.txt")  # редактируемый список целей
         self.settings_path = os.path.join(HERE, "smash_settings.json")  # живые настройки из панели
         self.oboz_path = os.path.join(HERE, "oboz_state.json")  # когда истекает обоз (без лишних запросов)
-        self.apply_live_settings()   # подхватить настройки из панели на старте
         self._default_targets = list(cfg.get("smash_targets") or TARGETS)
         self.targets = self.load_targets()
         self.ensure_targets_file()
@@ -442,6 +441,10 @@ class Smasher:
         self._hit_shields = True      # сносить донат-щит требушетом и фармить дальше (True) или беречь требушеты и скипать (False)
         self._last_tl_warn = 0.0      # троттл лога про нераспознанные анимации @holop
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
+        # ВАЖНО: только ТЕПЕРЬ, когда все флаги проинициализированы, читаем настройки
+        # из панели. Раньше вызов стоял ВЫШЕ и блок состояния затирал флаги обратно в
+        # False — из-за этого на старте не работал авто-реген (реген оставался 1.0 м/HP).
+        self.apply_live_settings()
         self.stats.update({"bombs": 0, "defused": 0, "exploded": 0,
                            "spent_gold": 0, "spent_silver": 0})
 
@@ -959,43 +962,59 @@ class Smasher:
         gold, _ = await self.my_balance()
         return gold
 
+    def _oboz_retry(self, secs, why):
+        """Отложить следующую попытку и СОХРАНИТЬ в файл. Важно: без записи на диск
+        каждый перезапуск бота снова лез бы в магазин (замечание Максима)."""
+        self._oboz_until = time.time() + secs + random.uniform(-secs * 0.15, secs * 0.15)
+        self._save_oboz_until(self._oboz_until)
+        log(f"  ⚠️ обоз: {why} — повторю через ~{secs // 60} мин")
+
     async def ensure_oboz(self):
-        """Купить обоз «+50% · 50м», если прошлый истёк. Только за серебро 🪙 — ⭐ никогда."""
+        """Купить обоз «+50% · 50м», если прошлый истёк.
+        Магазин РЕДАКТИРУЕТ ОДНО сообщение — навигируем по кнопкам и перечитываем
+        его же (искать слово в тексте нельзя: «Обоз» есть только в кнопке)."""
         if time.time() < self._oboz_until:
             return                                   # ещё действует — в игру не лезем
         log("🐴 Авто-обоз: прошлый истёк — беру новый (+50% на 50 мин)")
         gold = await self._ensure_gold(OBOZ_COST)
         if gold < OBOZ_COST:
-            log(f"  ⛔ обоз: не хватает золота ({gold} < {OBOZ_COST}🏅) — пропускаю, повторю позже")
-            self._oboz_until = time.time() + 600 + random.uniform(-120, 120)
+            self._oboz_retry(600, f"не хватает золота ({gold} < {OBOZ_COST}🏅)")
             return
         await self.send("Магазин")
         shop = await self.wait_text("Магазин")
-        if not shop or not await self.click_text(shop, "Расходуемые", label="Расходуемые ресурсы"):
-            log("  ⚠️ обоз: не открыл «Расходуемые ресурсы»")
-            self._oboz_until = time.time() + 600
+        if not shop:
+            self._oboz_retry(600, "магазин не открылся")
             return
-        con = await self.wait_text("Обоз") or shop
+        # 1) корень магазина → «Расходуемые ресурсы» (сообщение редактируется на месте)
+        if not await self.click_text(shop, "Расходуемые", label="Расходуемые ресурсы"):
+            self._oboz_retry(600, "нет кнопки «Расходуемые ресурсы»")
+            return
+        await rsleep(1.0)
+        con = await self.refetch(shop.id) or shop
+        # 2) «🐴 Обоз (% серебра набег) ►» — ищем ПО КНОПКАМ, не по тексту
         if not await self.click_text(con, "Обоз", label="Обоз"):
-            log("  ⚠️ обоз: не нашёл кнопку «Обоз»")
-            self._oboz_until = time.time() + 600
+            btns = " | ".join(f"«{t}»" for _, _, t in self.flat_buttons(con))
+            log(f"  📋 кнопки экрана: {btns}")
+            self._oboz_retry(600, "не нашёл кнопку «Обоз»")
             return
         await rsleep(1.0)
         scr = await self.refetch(con.id) or con
+        # 3) выбрать «+50% · 50м»
         a, b = OBOZ_PICK
         for r, c, t in self.flat_buttons(scr):
             if a in (t or "") and b in (t or ""):
                 if STAR in (t or ""):
-                    log(f"  ⛔ обоз за звёзды «{t}» — не беру")
-                    self._oboz_until = time.time() + 900
+                    self._oboz_retry(900, f"вариант за звёзды «{t}» — не беру")
                     return
                 await self.click(scr, r, c, label=f"Купить обоз «{t}»")
                 self._oboz_until = time.time() + OBOZ_MINUTES * 60 - 60
-                self._save_oboz_until(self._oboz_until)
-                log(f"  🐴 куплен обоз «{t}» — действует ~{OBOZ_MINUTES} мин")
+                self._save_oboz_until(self._oboz_until)   # ← в файл, чтобы не лезть повторно
+                log(f"  🐴 куплен обоз «{t}» — действует ~{OBOZ_MINUTES} мин "
+                    f"(следующая проверка по файлу, без запросов)")
                 return
-        log("  ⚠️ обоз: не нашёл вариант «+50% · 50м»")
-        self._oboz_until = time.time() + 900
+        btns = " | ".join(f"«{t}»" for _, _, t in self.flat_buttons(scr))
+        log(f"  📋 кнопки обоза: {btns}")
+        self._oboz_retry(900, "не нашёл вариант «+50% · 50м»")
 
     async def check_attacked(self):
         """Заметить пуш «НА ТЕБЯ НАПАЛИ» → сразу перепроверить оборону.
@@ -1869,7 +1888,7 @@ class Smasher:
                 if _is_dead_session(e):
                     raise
                 log(f"  ⚠️ авто-обоз сбой: {type(e).__name__}: {e}")
-                self._oboz_until = time.time() + 600
+                self._oboz_retry(600, "сбой при покупке")
         # 🛡️ АВТО-ОБОРОНА по таймеру (ров/частокол активны + запас)
         if self._auto_defense and self._next_defense and time.time() >= self._next_defense:
             try:
