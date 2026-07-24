@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-9"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-10"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -554,7 +554,7 @@ def save_donate(text):
 SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
-                           "auto_oboz": False, "war_mode": False}
+                           "auto_oboz": False, "war_mode": False, "human_mode": False}
 
 
 def load_smash_settings():
@@ -588,6 +588,7 @@ def save_smash_settings(body):
         out["bank_gold"] = bool(body.get("bank_gold", cur["bank_gold"]))
         out["auto_oboz"] = bool(body.get("auto_oboz", cur["auto_oboz"]))
         out["war_mode"] = bool(body.get("war_mode", cur["war_mode"]))
+        out["human_mode"] = bool(body.get("human_mode", cur["human_mode"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -1413,6 +1414,7 @@ async function loadSettings(){
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
+    const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
     if(c) c.disabled=!!(ra&&ra.checked);
   }catch(e){}
 }
@@ -1427,7 +1429,8 @@ async function saveSettings(){
     hit_shields:!!($('#set_hit_shields')||{}).checked,
     bank_gold:!!($('#set_bank_gold')||{}).checked,
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
-    war_mode:!!($('#set_war')||{}).checked};
+    war_mode:!!($('#set_war')||{}).checked,
+    human_mode:!!($('#set_human')||{}).checked};
   try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json(); const n=$('#snote');
     if(n){ n.textContent=d.ok?'✅ настройки сохранены — применятся в ближайший цикл':'ошибка сохранения';
@@ -1461,6 +1464,7 @@ const GUIDE_SECTIONS=[
    <p><b>🛡️ Авто-оборона</b> — держит ров и частокол активными + запас. Ров/частокол — расходники (блок 1 и 3 набега), бот перепроверяет их чаще и сразу после атаки на тебя.</p>
    <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
    <p><b>🐴 Авто-обоз</b> — покупает обоз «+50% серебра с набегов на 50 мин» за золото (собирает с холопов / из казны). Срок хранит в файле, лишний раз в магазин не лезет.</p>
+   <p><b>🧑 Человеческий режим</b> — бот иногда «отходит» на 8–30 минут, чтобы активность не была машинно-ровной сутками (менее палевно). Это ДОПОЛНЕНИЕ, не замена — фармить продолжает, в том числе ночью. По умолчанию выключен.</p>
    <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],
  ['🎭','Роли холопов',`
    <p>Перегоняет холопа в нужную профессию: выгоняет → тут же захватывает обратно → читает профессию → повторяет, пока не выпадет нужная. Бот успевает в 30-сек окно эксклюзива, поэтому холопа не уводят (руками — уводят).</p>
