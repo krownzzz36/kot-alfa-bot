@@ -266,29 +266,22 @@ DEFENSE_ITEMS = [
 
 
 def parse_regen_bonus(text):
-    """Суммарный бонус регена HP (%) с экрана «Территория». Складываем ВСЮ математику:
-      • «❤️‍🩹 Регенерация: +50%» (репутация)
-      • «❤️🩹 +6% реген» (княжество)  • «❤️ +21% реген» (герои)
-      • «🎨 ❤️ Сердце: +50%❤️» (Владимир: тоже реген)
-    Это только МОДЕЛЬ (сумма бонусов). БАЗА регена в игре неизвестна и учится по факту
-    (см. _regen_calibrate): sec/HP = base / (1 + bonus/100). Поэтому даже если какой-то
-    бонус влияет не на 100%, выученная база это компенсирует, а при смене бонусов
-    (левелап) бот пересчитает сам. Дубли одной строки не считаем — по одному на вид."""
+    """Суммарный бонус регена HP (%) с экрана «Территория». База = 1 HP/мин (60 с/HP).
+    ⚠️ КЛЮЧЕВОЕ (Максим, инфа 100%): «❤️‍🩹 Регенерация: +50%» и «🎨 ❤️ Сердце: +50%» —
+    это ОДИН И ТОТ ЖЕ бонус от иконки сердца, игра выводит его ДВАЖДЫ. Считать ОДИН РАЗ!
+    Раньше складывал оба → врал +127%; на деле +77% (сердце 50 + княжество 6 + герои 21).
+    Итого: sec/HP = 60 / (1 + bonus/100). Дубли иконки сердца не удваиваем."""
     t = text or ""
-    total = 0.0
-    seen = set()
-    def add(key, val):
-        if key not in seen:
-            seen.add(key)
-            return val
-        return 0.0
+    # бонус от сердца — показан как «Регенерация: +N%» И как «Сердце: +N%». Берём ОДИН раз.
+    heart = 0.0
     m = re.search(r"Регенерац\w*[:\s]*\+?(\d+)\s*%", t)
     if m:
-        total += add("rep", float(m.group(1)))
+        heart = max(heart, float(m.group(1)))
     m = re.search(r"Сердце[:\s]*\+?(\d+)\s*%", t)
     if m:
-        total += add("heart", float(m.group(1)))
-    for m in re.finditer(r"\+?(\d+)\s*%\s*реген", t):     # «+6% реген» (клан), «+21% реген» (герои)
+        heart = max(heart, float(m.group(1)))
+    total = heart
+    for m in re.finditer(r"\+?(\d+)\s*%\s*реген", t):     # «+6% реген» (княжество), «+21% реген» (герои)
         total += float(m.group(1))
     return total
 LOSS_WORDS = ("отступ", "героическая оборона", "вынуждены", "поражение", "разбит",
@@ -435,10 +428,7 @@ class Smasher:
         self._started = 0.0      # время старта боевой сессии (для итогового отчёта)
         self.peer = None   # кэш entity бота (резолвим один раз)
         self._healing = False    # режим лечения: не атакуем, перечитываем реальное HP
-        self._regen_calib_path = os.path.join(HERE, "regen_calib.json")  # выученная БАЗА регена
-        self._heal_anchor = None  # (время, HP) начала чистого окна замера регена
         self._regen_bonus = 0.0   # сумма бонусов регена с Территории (%), обновляется при чтении
-        self._regen_base = None   # выученная база сек/HP при 0% бонусов (учим по факту)
         self._heal_start = 0.0   # когда ушли на лечение (для аварийного потолка)
         self._last_raw = ""            # сырой текст последнего ответа набега
         self._last_rep_penalty = 0.0   # < 0, если за последнюю атаку списали репутацию
@@ -778,8 +768,8 @@ class Smasher:
                 edited = bool(getattr(m, "edit_date", None))
                 if m.id > floor or edited:          # новое сообщение ИЛИ свежая правка
                     b = parse_regen_bonus(t)        # заодно освежаем бонусы регена (левелап и т.п.)
-                    if b > 0:
-                        self._regen_bonus = b
+                    if b > 0 and self._regen_auto and abs(b - (self._regen_bonus or 0)) >= 1:
+                        self._recompute_regen(b, quiet=True)   # бонусы сменились → пересчитать
                     return parse_my_low_hp(t)
         # свежий ответ не пришёл — вернём хотя бы последнее прочитанное (лучше, чем None)
         for m in sorted(await self.recent(8), key=lambda x: x.id, reverse=True):
@@ -800,36 +790,11 @@ class Smasher:
             await rsleep(0.5)
         return None
 
-    # ---------- РЕГЕН: измеряем ПО ФАКТУ, а не по формуле ----------
-    # Формулу из бонусов надёжно посчитать нельзя: неизвестна база игры и спорно,
-    # входит ли «🎨 Сердце». Поэтому бот САМ замеряет реген по чистым окнам лечения
-    # (без атак между двумя чтениями HP), сглаживает и хранит в regen_calib.json.
-    # Это автоматически учитывает ЛЮБОЙ бонус (в т.ч. Сердце, если он реально влияет).
-    def _load_regen_calib(self):
-        """Вернуть (base_sec, samples): выученная БАЗА сек/HP при 0% бонусов."""
-        try:
-            with open(self._regen_calib_path, encoding="utf-8") as f:
-                d = json.load(f)
-            base = float(d.get("base_sec", 0))
-            if 5 <= base <= 1200:
-                return base, int(d.get("samples", 0))
-        except (OSError, ValueError, TypeError):
-            pass
-        return None, 0
-
-    def _save_regen_calib(self, base, samples, bonus, sec_now):
-        try:
-            with open(self._regen_calib_path, "w", encoding="utf-8") as f:
-                json.dump({"base_sec": round(base, 1), "bonus_at_calib": round(bonus, 1),
-                           "sec_per_hp_now": round(sec_now, 1), "samples": samples,
-                           "updated": time.strftime("%Y-%m-%d %H:%M:%S")},
-                          f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
-
-    def _sec_per_hp_from_base(self, base, bonus):
-        """Модель: сек/HP = база / (1 + сумма_бонусов/100). Складываем всю математику."""
-        return max(5.0, min(base / (1.0 + max(0.0, bonus) / 100.0), 600.0))
+    # ---------- РЕГЕН: простая формула, база ИЗВЕСТНА = 60 с/HP (1 HP/мин) ----------
+    # Максим (инфа 100%): база регена = 1 HP за 60с. Бонусы складываются, «Сердце» =
+    # «Регенерация» (один бонус, показан дважды) — считаем ОДИН раз (см. parse_regen_bonus).
+    # sec/HP = 60 / (1 + бонусы/100). Никакого обучения базы не нужно — всё детерминировано.
+    REGEN_BASE = 60.0
 
     def _apply_sec_per_hp(self, sec):
         """Записать сек/HP в рабочее значение И в поле настроек (видно в панели)."""
@@ -844,64 +809,27 @@ class Smasher:
         except (OSError, ValueError):
             pass
 
-    def _regen_calibrate(self, hp):
-        """УМНЫЙ реген: замерил факт → вывел БАЗУ под текущие бонусы → сгладил → сохранил.
-        Модель: sec/HP = база / (1 + бонусы/100). База — константа игры (нам неизвестна),
-        учим её по факту. Тогда при СМЕНЕ бонусов (левелап, новые герои) бот сам
-        пересчитает sec/HP, не перемеряя. Окно между двумя чтениями HP:
-        - HP УПАЛ (атаковали) → окно грязное, переставляем якорь, не считаем;
-        - прошло ≥3 мин и ≥6 HP → чистый замер."""
-        if hp is None:
-            return
-        now = time.time()
-        a = self._heal_anchor
-        if a is None or hp < a[1]:            # старт лечения или после удара по нам — новый якорь
-            self._heal_anchor = (now, hp)
-            return
-        dt, dhp = now - a[0], hp - a[1]
-        if dt < 180 or dhp < 6:               # окно ещё короткое — ждём, якорь не трогаем
-            return
-        measured = dt / dhp                   # секунд на 1 HP ПО ФАКТУ (при текущих бонусах)
-        self._heal_anchor = (now, hp)         # следующий замер — от текущей точки
-        if not (5 <= measured <= 200):
-            return
-        bonus = self._regen_bonus or 0.0
-        base_now = measured * (1.0 + bonus / 100.0)   # ← выводим БАЗУ (сек/HP при 0% бонусов)
-        base, n = self._load_regen_calib()
-        n = (n or 0) + 1
-        self._regen_base = base_now if base is None else (base * 0.6 + base_now * 0.4)
-        sec_now = self._sec_per_hp_from_base(self._regen_base, bonus)
-        self._save_regen_calib(self._regen_base, n, bonus, sec_now)
-        self._apply_sec_per_hp(sec_now)
-        log(f"  📐 замер: {measured:.0f} с/HP при бонусах +{bonus:.0f}% → база {self._regen_base:.0f} "
-            f"с/HP → рабочее ~{sec_now:.0f} с/HP [замер #{n}]")
+    def _recompute_regen(self, bonus=None, quiet=False):
+        """sec/HP = 60 / (1 + бонусы/100). Вызывается на старте и при смене бонусов
+        (левелап/новые герои — их ловим при каждом чтении Территории)."""
+        if bonus is not None:
+            self._regen_bonus = bonus
+        b = self._regen_bonus or 0.0
+        sec = max(5.0, min(self.REGEN_BASE / (1.0 + b / 100.0), 600.0))
+        self._apply_sec_per_hp(sec)
+        if not quiet:
+            log(f"🔄 Реген: база 60 с/HP × бонусы +{b:.0f}% → ~{sec:.0f} сек/HP "
+                f"(Сердце и Регенерация — один бонус, считаю один раз).")
+        return sec
 
     async def update_regen_from_main(self):
-        """Авто-реген на старте: если уже есть ЗАМЕРЕННОЕ значение (regen_calib.json) —
-        берём его (это факт). Если замеров ещё не было — ставим грубую оценку по
-        бонусам как СТАРТ, дальше бот уточнит её замерами во время лечения.
-        Значение пишется в поле «сек на 1 HP» (видно в панели). Хочешь своё —
-        выключи галочку авто-регена и впиши руками, бот трогать не будет."""
+        """Авто-реген на старте: прочитать бонусы с Территории и посчитать сек/HP.
+        Хочешь своё число — выключи галочку авто-регена и впиши руками."""
         if not self._regen_auto:
             return
         terr = await self.open_territory()
         bonus = parse_regen_bonus(terr.message or "") if terr else 0.0
-        if bonus > 0:
-            self._regen_bonus = bonus
-        base, n = self._load_regen_calib()
-        if base is not None:                  # база уже выучена по факту
-            self._regen_base = base
-            sec = self._sec_per_hp_from_base(base, self._regen_bonus)
-            self._apply_sec_per_hp(sec)
-            log(f"🔄 Реген (умный): база {base:.0f} с/HP × бонусы +{self._regen_bonus:.0f}% "
-                f"→ ~{sec:.0f} сек/HP (база выучена по {n} замерам). Уточняю дальше при лечении.")
-            return
-        # базы ещё нет — стартовая прикидка (база=60 с/HP = 1 HP/мин), уточним по факту
-        self._regen_base = 60.0
-        sec = self._sec_per_hp_from_base(self._regen_base, self._regen_bonus)
-        self._apply_sec_per_hp(sec)
-        log(f"🔄 Реген (умный): стартовая база 60 с/HP × бонусы +{self._regen_bonus:.0f}% "
-            f"→ ~{sec:.0f} сек/HP. Это ПРИКИДКА — при первом лечении замерю факт и выучу базу.")
+        self._recompute_regen(bonus if bonus > 0 else 0.0)
 
     # ---------- АВТО-КАЗНА (доход → депозит → реинвест) ----------
     async def collect_and_bank(self):
@@ -1370,7 +1298,6 @@ class Smasher:
                 hp = my_after if isinstance(my_after, int) else 0
                 self._healing = True
                 self._heal_start = time.time()
-                self._heal_anchor = (time.time(), hp)   # старт чистого окна замера регена
                 log(f"🩸 Игра: HP {hp} < {s['my_min_hp']} — мало для атаки. Ухожу на лечение "
                     f"до {s['my_recover_to']} (перечитываю HP ~каждые {s['heal_recheck']}с).")
                 return hp
@@ -2013,7 +1940,6 @@ class Smasher:
                 self._healing = False
                 log("❤️ Потолок лечения истёк — пробую продолжить (проверю HP в бою).")
             else:
-                self._regen_calibrate(hp)          # замеряем фактический реген (учтёт Сердце и всё)
                 left_hp = s["my_recover_to"] - (hp or 0)
                 rem_min = max(1.0, left_hp * s["min_per_hp"])            # оценка минут до полного
                 rem_s = rem_min * 60.0
@@ -2038,7 +1964,6 @@ class Smasher:
         if my_hp is not None and my_hp <= s["my_min_hp"]:
             self._healing = True
             self._heal_start = time.time()
-            self._heal_anchor = (time.time(), my_hp)   # старт чистого окна замера регена
             log(f"🩸 Мои HP {my_hp} ≤ {s['my_min_hp']} — ухожу на лечение до {s['my_recover_to']}.")
             self.interim_report("ушёл на лечение")   # промежуточный итог по ходу дела
             # 🏦 раз уж не бьём и регенимся — заодно собираем казну (но не чаще раза в 10 мин)
