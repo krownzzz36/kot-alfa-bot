@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-4"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-5"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -1278,7 +1278,7 @@ function render(mid){
   main.innerHTML=head+`<div class="workspace"><div class="controls">${ctl}</div>
     <section class="console"><div class="console-bar"><span class="live">LIVE</span>
       <span class="console-name">Журнал — ${m.title}</span>
-      <span class="console-meta">автоскролл</span></div>
+      <span class="console-meta">новые сверху</span></div>
       <pre class="log" id="log">…</pre></section></div>`;
   if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
@@ -1291,8 +1291,13 @@ async function pollMod(){
     const nb=$('#nightBtn'); if(nb){ nightOn=!!d.night;
       nb.className='b-night'+(nightOn?' on':'');
       nb.textContent=nightOn?'🌙 Ночной режим: ВКЛ':'🌙 Ночной режим'; }
-    const log=$('#log'); if(log){ const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<26;
-      log.textContent=d.log||'(пусто)'; if(bottom) log.scrollTop=log.scrollHeight; }
+    const log=$('#log'); if(log){
+      // ИНВЕРСИЯ: новые строки СВЕРХУ, старые уходят вниз. Держим скролл у верха,
+      // если пользователь его не увёл вниз читать историю.
+      const atTop=log.scrollTop<26;
+      const txt=(d.log||'(пусто)').replace(/\n+$/,'').split('\n').reverse().join('\n');
+      if(log.textContent!==txt){ log.textContent=txt; if(atTop) log.scrollTop=0; }
+    }
   }catch(e){}
   loadResults();
 }
