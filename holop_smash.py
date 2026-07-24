@@ -444,6 +444,10 @@ class Smasher:
         self._last_attack_id = 0      # id последнего замеченного пуша «НА ТЕБЯ НАПАЛИ»
         self._auto_oboz = False       # авто-покупка обоза (+50% серебра с набегов)
         self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
+        self._human_mode = False      # 🧑 человеческий ритм: иногда «отходит» на перерыв (не замена 24/7!)
+        self._next_human_break = 0.0
+        self._notify_dm = True        # 🔔 слать себе в Избранное о критичном (бочка/сессия)
+        self._notify_sent = {}        # ключ события -> когда слали (троттлинг)
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
         self._pierce_defenses = True  # пробивать ров/частокол (True) или пропускать (False)
@@ -551,6 +555,17 @@ class Smasher:
             for k in WAR_OVERRIDES:
                 self.s[k] = DEFAULTS[k]      # вернуть спокойные тайминги
             log("🕊️ Режим войны выключен — вернул обычные тайминги.")
+        # 🧑 человеческий режим — ДОПОЛНЕНИЕ, не замена: бот так же фармит (в т.ч. ночью),
+        # но иногда «отходит» на перерыв, чтобы активность не была машинно-ровной сутками.
+        was_human = getattr(self, "_human_mode", False)
+        self._notify_dm = bool(data.get("notify_dm", True))
+        self._human_mode = bool(data.get("human_mode", False))
+        if self._human_mode and not was_human:
+            self._next_human_break = time.time() + random.uniform(1800, 4500)  # первый через 30–75 мин
+            log("🧑 Человеческий режим ВКЛ — иногда буду делать перерывы (не машинный ритм). "
+                "Фармить продолжаю, в т.ч. ночью.")
+        elif not self._human_mode and was_human:
+            log("🤖 Человеческий режим ВЫКЛ — работаю без перерывов 24/7.")
 
     def ensure_targets_file(self):
         """Если файла целей нет — создать с текущим списком (чтобы панель могла его показать)."""
@@ -1588,6 +1603,9 @@ class Smasher:
         self.stats["bombs"] += 1
         self._bomb_log("💣💣💣 БОЧКА! Заминировал: {} | осталось {} — РАЗМИНИРОВАНИЕ".format(
             who.group(1).strip() if who else "?", fmt_secs(secs) if secs else "?"))
+        await self.notify_me("💣 На тебя заложили бочку ({}, осталось {}). Разминирую Огнивом."
+                             .format(who.group(1).strip() if who else "?",
+                                     fmt_secs(secs) if secs else "?"), key="bomb", throttle=600)
         sp = {"gold": 0, "silver": 0}
         if not await self.ensure_ognivo(sp):
             self._bomb_log("  ⛔ нечем разминировать (Огниво/золото) — бочка может взорваться!")
@@ -1600,6 +1618,8 @@ class Smasher:
         if outcome == "exploded":
             self.stats["exploded"] += 1
             self._bomb_log("  💥 ВЗРЫВ (фитиль не тот) — восстанавливаю территорию и холопов.")
+            await self.notify_me("💥 БОЧКА ВЗОРВАЛАСЬ на твоей территории — восстанавливаю "
+                                 "территорию и холопов. Загляни, проверь потери.", key="bomb")
             await self.recover_after_explosion(sp)
             return
         log(f"  ⁇ разминирование: непонятный исход «{outcome}» — проверь лог сырых экранов выше")
@@ -1909,6 +1929,8 @@ class Smasher:
                 if await self._one_cycle() == "stop":
                     break
                 self._save_cd_cache()   # КД целей → в файл (переживёт перезапуск, не долбит после старта)
+                if await self._maybe_human_break() == "stop":
+                    break
             except Exception as e:
                 if _is_dead_session(e):
                     log("🛑 СЕССИЯ БОЛЬШЕ НЕ РАБОТАЕТ — Telegram отозвал ключ (сессия "
@@ -1924,6 +1946,39 @@ class Smasher:
                     pass
                 if await self.sleep_gated(15) == "stop":
                     break
+
+    async def notify_me(self, text, key="", throttle=1800):
+        """🔔 Прислать себе в «Избранное» (Saved Messages) о важном событии — узнаёшь сразу,
+        даже не глядя в пульт. Троттл по ключу, чтоб не спамить. Не игровое действие."""
+        if not self._notify_dm:
+            return
+        now = time.time()
+        if key in self._notify_sent and now - self._notify_sent[key] < throttle:
+            return                                # это событие слали недавно — не спамим
+        self._notify_sent[key] = now
+        try:
+            await self.c.send_message("me", "🐱 Кот Альфа Бот\n" + text)
+        except Exception:
+            pass
+
+    async def _maybe_human_break(self):
+        """🧑 Человеческий режим: раз в ~40–100 мин «отойти» на 8–30 мин. Это ДОПОЛНЕНИЕ
+        к обычной работе (ночью фармит), просто ломает машинно-ровный ритм. Вернуть 'stop',
+        если во время перерыва пульт попросил остановиться."""
+        if not self._human_mode:
+            return None
+        now = time.time()
+        if self._next_human_break <= 0:
+            self._next_human_break = now + random.uniform(1800, 4500)
+            return None
+        if now < self._next_human_break:
+            return None
+        mins = random.uniform(8, 30)
+        log(f"☕ Человеческий режим: перерыв ~{mins:.0f} мин — чтобы активность не была "
+            f"машинно-ровной. Потом продолжу.")
+        st = await self.sleep_gated(mins * 60)
+        self._next_human_break = time.time() + random.uniform(2400, 6000)   # следующий через 40–100 мин
+        return st
 
     async def _one_cycle(self):
         """Один проход главного цикла. Вернуть 'stop' если пульт попросил остановиться, иначе None."""
