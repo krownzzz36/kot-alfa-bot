@@ -122,6 +122,8 @@ async def main():
     else:
         session = os.path.join(HERE, cfg.get("session_name", "holop_session"))
         client = TelegramClient(session, int(cfg["api_id"]), cfg["api_hash"])
+    from holop_reroll import quiet_telethon
+    quiet_telethon()
     await client.start()
     # 🔒 доступ только участникам закрытой группы (анти-кража)
     from access import enforce_access

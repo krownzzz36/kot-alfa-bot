@@ -59,7 +59,7 @@ from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 
 # переиспользуем проверенный фундамент из основного скрипта
-from holop_reroll import HERE, load_config, setup_logging, log, INVIS
+from holop_reroll import HERE, load_config, setup_logging, log, INVIS, quiet_telethon
 
 # ════════════════════════════════════════════════════════════════════════════
 #  ХРУПКИЕ СТРОКИ ИГРЫ — правь ТОЛЬКО тут, если @holop обновит интерфейс.
@@ -815,6 +815,7 @@ async def main():
     args = ap.parse_args()
 
     setup_logging()
+    quiet_telethon()   # без спама telethon при обрывах связи
     cfg = load_config()
     if not cfg.get("api_id") or not cfg.get("api_hash"):
         log("Заполни api_id/api_hash в config.json.")

@@ -40,6 +40,7 @@ import os
 import random
 import re
 import sys
+import time
 from datetime import datetime
 
 from telethon import TelegramClient
@@ -167,10 +168,55 @@ def setup_logging():
     fh = logging.FileHandler(os.path.join(HERE, "run.log"), encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s"))
     logger.addHandler(fh)
+    quiet_telethon()   # без простыни telethon при обрывах связи
 
 
 def log(msg):
     logger.info(msg)
+
+
+class _TelethonNoise(logging.Filter):
+    """Telethon на каждый обрыв связи пишет WARNING («Server closed the connection:
+    [WinError 64]…»). На нестабильном интернете/VPN это заливает журнал сотнями
+    одинаковых строк — панель превращается в кашу (жалобы Ксюши и Карины).
+    Шум давим, но НЕ немеем: раз в минуту выдаём одну понятную строку со счётчиком."""
+    NOISE = ("server closed the connection", "connection closed", "winerror",
+             "connection to telegram failed", "attempt ", "disconnected",
+             "reconnect", "connection reset", "timeouterror")
+
+    def __init__(self, notify):
+        super().__init__()
+        self.notify, self._last, self._n = notify, 0.0, 0
+
+    def filter(self, record):
+        try:
+            msg = str(record.getMessage()).lower()
+        except Exception:
+            return True
+        if any(w in msg for w in self.NOISE):
+            self._n += 1
+            t = time.time()
+            if t - self._last > 60:
+                self._last = t
+                self.notify(f"📡 Связь с Telegram рвётся (обрывов: {self._n}) — переподключаюсь. "
+                            f"Обычно виноват интернет или VPN. Работу не останавливаю.")
+                self._n = 0
+            return False          # в журнал эту строку не пускаем
+        return True
+
+
+def quiet_telethon(notify=None):
+    """Убрать спам telethon из журнала. Настоящие ошибки по-прежнему видны.
+    notify по умолчанию — print: stdout любого скрипта попадает в журнал панели."""
+    notify = notify or print
+    tl = logging.getLogger("telethon")
+    tl.propagate = False                     # не утекать в root → stderr → панель
+    tl.handlers[:] = []
+    h = _SafeStreamHandler(sys.stdout)
+    h.setFormatter(logging.Formatter("%(asctime)s  telethon: %(message)s", datefmt="%H:%M:%S"))
+    h.addFilter(_TelethonNoise(notify))
+    tl.addHandler(h)
+    tl.setLevel(logging.WARNING)
 
 
 def load_config():

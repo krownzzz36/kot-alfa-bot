@@ -266,13 +266,16 @@ DEFENSE_ITEMS = [
 
 
 def parse_regen_bonus(text):
-    """Суммарный бонус регена HP (%) с экрана «Территория». База = 1 HP/мин.
-    Складываем: «Регенерация: +50%», «Сердце: +50%», «+21% реген» (герои), «+6% реген» (клан)."""
+    """Суммарный бонус регена HP (%) с экрана «Территория». База = 1 HP/мин (60 с/HP).
+    Складываем ТОЛЬКО настоящие бонусы регена:
+      • «❤️‍🩹 Регенерация: +50%» (репутация)
+      • «❤️🩹 +6% реген» (княжество)  • «❤️ +21% реген» (герои)
+    ⚠️ «🎨 ❤️ Сердце: +50%❤️» НЕ складываем — это запас HP, а не скорость восстановления.
+    Раньше складывали, и расчёт врал: у Владимира выходило +127% (≈26 с/HP) вместо
+    реальных +77% (≈34 с/HP) — замер вживую подтвердил 34.6 с/HP."""
     t = text or ""
     total = 0.0
     for m in re.finditer(r"Регенерац\w*[:\s]*\+?(\d+)\s*%", t):
-        total += float(m.group(1))
-    for m in re.finditer(r"Сердце[:\s]*\+?(\d+)\s*%", t):
         total += float(m.group(1))
     for m in re.finditer(r"\+?(\d+)\s*%\s*реген", t):
         total += float(m.group(1))
@@ -435,7 +438,6 @@ class Smasher:
         self._auto_oboz = False       # авто-покупка обоза (+50% серебра с набегов)
         self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
-        self._heal_sample = None      # (время, HP) — для замера фактического регена
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
         self._pierce_defenses = True  # пробивать ров/частокол (True) или пропускать (False)
         self._hit_shields = True      # сносить донат-щит требушетом и фармить дальше (True) или беречь требушеты и скипать (False)
@@ -769,38 +771,35 @@ class Smasher:
             await rsleep(0.5)
         return None
 
-    def _note_heal_sample(self, hp):
-        """Замер РЕАЛЬНОГО регена по двум соседним чтениям HP → уточняем min_per_hp.
-        Нужен потому, что бонусы регена с главной могут не распарситься (или измениться),
-        и бот тогда спит лишнее. Факт всегда важнее расчёта."""
-        now = time.time()
-        prev = getattr(self, "_heal_sample", None)
-        self._heal_sample = (now, hp)
-        if not prev:
-            return
-        dt_min = (now - prev[0]) / 60.0
-        dhp = hp - prev[1]
-        if dhp <= 0 or dt_min < 0.5:
-            return                                  # шум/откат HP — не учитываем
-        measured = dt_min / dhp                     # минут на 1 HP ПО ФАКТУ
-        if not (0.05 <= measured <= 10.0):
-            return                                  # мусор
-        old = float(self.s["min_per_hp"])
-        self.s["min_per_hp"] = old * 0.7 + measured * 0.3   # сглаживаем, чтоб не дёргаться
-        log(f"  📐 замер регена: по факту ~{measured*60:.0f} с/HP (считал ~{old*60:.0f}) "
-            f"→ уточнил до ~{self.s['min_per_hp']*60:.0f} с/HP")
-
     async def update_regen_from_main(self):
-        """Авто-реген: посчитать сек/HP по бонусам с главной и записать в min_per_hp."""
+        """Авто-реген: ОДИН РАЗ при старте посчитать сек/HP по бонусам с главной
+        и ЗАПИСАТЬ результат в smash_settings.json — чтобы значение было видно
+        в панели и больше не пересчитывалось (просьба Максима: «считываются один раз
+        и идут в файл, потом это значение в настройки вписывается, без постоянной
+        проверки и пересчёта»). Хочешь своё число — выключи галочку и впиши руками."""
         if not self._regen_auto:
             return
         terr = await self.open_territory()
         if not terr:
+            log("  ⚠️ авто-реген: не открыл «Территорию» — оставляю текущее значение")
             return
         bonus = parse_regen_bonus(terr.message or "")
-        sec = 60.0 / (1.0 + bonus / 100.0) if bonus > 0 else 60.0
+        # формула — оценка (реген в игре не идеально линеен): по замерам реальность
+        # ближе к расчёту с запасом ~15%. Лучше слегка переоценить время (реже будить
+        # проверки), чем недооценить и ломиться в бой с недолеченным HP.
+        sec = (60.0 / (1.0 + bonus / 100.0)) * 1.15 if bonus > 0 else 60.0
+        sec = max(5.0, min(sec, 600.0))
         self.s["min_per_hp"] = sec / 60.0
-        log(f"🔄 Авто-реген с главной: бонусы +{bonus:.0f}% реген → ~{sec:.0f} сек/HP")
+        try:                                   # положить в настройки, чтобы видел в панели
+            with open(self.settings_path, encoding="utf-8") as f:
+                data = json.load(f)
+            data["sec_per_hp"] = int(round(sec))
+            with open(self.settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except (OSError, ValueError):
+            pass
+        log(f"🔄 Авто-реген посчитан ОДИН РАЗ: бонусы +{bonus:.0f}% → ~{sec:.0f} сек/HP "
+            f"(записал в настройки, пересчитывать больше не буду)")
 
     # ---------- АВТО-КАЗНА (доход → депозит → реинвест) ----------
     async def collect_and_bank(self):
@@ -1906,22 +1905,18 @@ class Smasher:
             cap = (s["my_recover_to"] * s["min_per_hp"] * 60) + 600   # аварийный потолок сна
             if hp is not None and hp >= s["my_recover_to"]:
                 self._healing = False
-                self._heal_sample = None
                 log(f"❤️ HP восстановлено ({hp}) — продолжаю набеги.")
             elif time.time() - self._heal_start > cap:
                 self._healing = False
-                self._heal_sample = None
                 log("❤️ Потолок лечения истёк — пробую продолжить (проверю HP в бою).")
             else:
-                # ЗАМЕР ФАКТИЧЕСКОГО регена по двум чтениям HP — чтобы не спать лишнего,
-                # если реально лечишься быстрее расчётного (бонусы реге на могут не распарситься).
-                if hp is not None:
-                    self._note_heal_sample(hp)
                 rem = max(1.0, (s["my_recover_to"] - (hp or 0)) * s["min_per_hp"])
                 shown = str(hp) if hp is not None else "?"
                 # спим до почти-цели, но перечитываем заметно чаще (потолок 4 мин) и с рандомом
                 nap = rem * 60.0 * 0.85 * random.uniform(0.85, 1.15)
-                nap = max(45.0, min(nap, 240.0))
+                left_hp = s["my_recover_to"] - (hp or 0)
+                cap = 90.0 if left_hp <= 5 else 240.0   # почти долечился — проверяем чаще
+                nap = max(45.0, min(nap, cap))
                 log(f"🩶 Лечусь: HP {shown}, до {s['my_recover_to']} ~{rem:.0f}м "
                     f"(~{s['min_per_hp']*60:.0f} с/HP) — перечитаю через {nap:.0f}с")
                 return await self.sleep_gated(nap)
@@ -2051,6 +2046,8 @@ async def main():
     else:
         session = os.path.join(HERE, cfg.get("session_name", "holop_session"))
         client = TelegramClient(session, int(cfg["api_id"]), cfg["api_hash"])
+    from holop_reroll import quiet_telethon
+    quiet_telethon(log)   # шум telethon → одна понятная строка в smash.log
     await client.start()
     # 🔒 доступ только участникам закрытой группы (анти-кража)
     from access import enforce_access
