@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-3"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-4"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -939,12 +939,15 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
  .mod-title{font-size:22px;font-weight:750;letter-spacing:-.02em}
  .desc{color:var(--mut);font-size:13px;margin-top:2px;max-width:72ch}
  .head-r{flex-shrink:0}
- .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:16px;margin-bottom:20px;
-   align-items:start;animation:rise .42s .05s both}
- .acc{background:var(--panel);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow);
+ /* рабочая зона: слева список настроек, справа консоль — аккордеоны открываются
+    ВНИЗ НА МЕСТЕ и НЕ двигают консоль (просьба Максима — без дёрготни) */
+ .workspace{display:grid;grid-template-columns:minmax(330px,430px) 1fr;gap:20px;align-items:start;
+   animation:rise .42s .05s both}
+ .controls{display:flex;flex-direction:column;gap:12px;min-width:0}
+ .acc{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);
    transition:box-shadow .25s,border-color .25s}
  .acc:hover{border-color:color-mix(in srgb,var(--accent) 38%,var(--line))}
- .acc[open]{grid-column:1/-1}
+ .acc[open]{box-shadow:0 1px 2px rgba(0,0,0,.32),0 24px 50px -18px color-mix(in srgb,var(--accent) 40%,#0009)}
  .acc summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;padding:17px 19px;
    font-weight:600;font-size:14.5px;user-select:none;transition:background .2s}
  .acc summary:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}
@@ -1026,8 +1029,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    .rail-foot{flex-direction:row;align-items:center;border-top:0;padding-top:0;margin-left:auto}
    .ver{display:none}
    main{padding:16px 14px 26px}
-   .controls{grid-template-columns:1fr}
-   .acc[open]{grid-column:auto}
+   .workspace{grid-template-columns:1fr}
    pre.log{max-height:56vh;min-height:320px}
  }
  @media (max-width:430px){.brand-tx{font-size:15px}.btns button{min-width:0}}
@@ -1273,11 +1275,11 @@ function render(mid){
         </div>
       </details>${resultBox}`;
   }
-  main.innerHTML=head+`<div class="controls">${ctl}</div>
+  main.innerHTML=head+`<div class="workspace"><div class="controls">${ctl}</div>
     <section class="console"><div class="console-bar"><span class="live">LIVE</span>
       <span class="console-name">Журнал — ${m.title}</span>
       <span class="console-meta">автоскролл</span></div>
-      <pre class="log" id="log">…</pre></section>`;
+      <pre class="log" id="log">…</pre></section></div>`;
   if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
 }
