@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-12"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-13"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -467,6 +467,28 @@ def tail(logname, n=250):
     return "".join(out) or "(лог пуст)"
 
 
+def collect_logs():
+    """Один текстовый файл со всеми логами для поддержки — чтобы друг прислал
+    одним кликом, а не искал файлы в папке. Секретов тут нет: session_string и
+    config.json НЕ включаем, только диагностические логи."""
+    import platform as _pl
+    head = ("КОТ АЛЬФА БОТ — логи для поддержки\n"
+            f"версия: {VERSION}\n"
+            f"система: {_pl.platform()}  python {_pl.python_version()}\n"
+            + "=" * 60 + "\n")
+    parts = [head]
+    for fname, n in (("startup_log.txt", 400), ("hub_error.log", 400),
+                     ("auth_log.txt", 200), ("smash.log", 400),
+                     ("update_log.txt", 120)):
+        try:
+            with open(path(fname), encoding="utf-8", errors="replace") as f:
+                body = "".join(f.readlines()[-n:]).strip()
+        except OSError:
+            body = "(файла нет)"
+        parts.append(f"\n\n━━━ {fname} ━━━\n{body or '(пусто)'}")
+    return "\n".join(parts)
+
+
 # ─────────────── модуль набегов (цикл) ───────────────
 def write_control(v):
     try:
@@ -802,6 +824,14 @@ class H(BaseHTTPRequestHandler):
             self._json({"authorized": is_authorized()})
         elif p == "/api/version":
             self._json({"version": VERSION})       # для авто-перезагрузки страницы при обнове
+        elif p == "/api/logs":
+            data = collect_logs().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="kot-alfa-logs.txt"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         elif p == "/api/config":
             self._json(ui_config())
         elif p == "/api/targets":
@@ -1167,6 +1197,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
  .guide-body b{color:var(--ink);font-weight:650}
  .guide-body code{font:12.5px var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
  .guide-body i{color:var(--mut)}
+ .dl-logs{display:inline-block;text-decoration:none;background:var(--accent);color:#2a1206;font-weight:650;font-size:13.5px;padding:9px 16px;border-radius:10px;transition:filter .15s} .dl-logs:hover{filter:brightness(1.06)}
  .upd-banner{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:200;background:var(--accent);color:#2a1206;font-weight:650;font-size:14px;padding:11px 20px;border-radius:12px;box-shadow:var(--shadow);animation:rise .3s both}
 </style></head><body>
 <div class="app">
@@ -1499,7 +1530,8 @@ const GUIDE_SECTIONS=[
    <li><b>Новых функций нет после обновы:</b> та же причина — панель держала старую версию в памяти. Полный перезапуск лечит.</li>
    <li><b>Журнал завалило «Server closed the connection»:</b> рвётся связь (интернет/VPN). Бот сам переподключается; зафиксируй VPN на одной стране.</li>
    <li><b>«Ключ отозван» / вылет сессии:</b> VPN сменил страну на ходу. Зафиксируй одну страну, жми «Сменить аккаунт».</li>
-   <li>Не помогло — пришли в чат файлы <code>startup_log.txt</code>, <code>hub_error.log</code>, <code>auth_log.txt</code> из папки пульта.</li></ul>
+   <li>Не помогло — нажми кнопку ниже и пришли скачанный файл в чат. В нём все логи разом (пароля и ключа аккаунта там нет).</li></ul>
+   <p><a class="dl-logs" href="/api/logs" download="kot-alfa-logs.txt">📥 Скачать логи для поддержки</a></p>
    <p><i>Журнал теперь идёт новыми строками сверху.</i></p>`],
 ];
 const GUIDE_HTML=`<div class="guide">
