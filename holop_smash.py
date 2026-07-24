@@ -424,6 +424,8 @@ class Smasher:
         self._started = 0.0      # время старта боевой сессии (для итогового отчёта)
         self.peer = None   # кэш entity бота (резолвим один раз)
         self._healing = False    # режим лечения: не атакуем, перечитываем реальное HP
+        self._regen_calib_path = os.path.join(HERE, "regen_calib.json")  # ФАКТИЧЕСКИЙ реген (замерен)
+        self._heal_anchor = None  # (время, HP) начала чистого окна замера регена
         self._heal_start = 0.0   # когда ушли на лечение (для аварийного потолка)
         self._last_raw = ""            # сырой текст последнего ответа набега
         self._last_rep_penalty = 0.0   # < 0, если за последнюю атаку списали репутацию
@@ -782,35 +784,93 @@ class Smasher:
             await rsleep(0.5)
         return None
 
-    async def update_regen_from_main(self):
-        """Авто-реген: ОДИН РАЗ при старте посчитать сек/HP по бонусам с главной
-        и ЗАПИСАТЬ результат в smash_settings.json — чтобы значение было видно
-        в панели и больше не пересчитывалось (просьба Максима: «считываются один раз
-        и идут в файл, потом это значение в настройки вписывается, без постоянной
-        проверки и пересчёта»). Хочешь своё число — выключи галочку и впиши руками."""
-        if not self._regen_auto:
-            return
-        terr = await self.open_territory()
-        if not terr:
-            log("  ⚠️ авто-реген: не открыл «Территорию» — оставляю текущее значение")
-            return
-        bonus = parse_regen_bonus(terr.message or "")
-        # формула — оценка (реген в игре не идеально линеен): по замерам реальность
-        # ближе к расчёту с запасом ~15%. Лучше слегка переоценить время (реже будить
-        # проверки), чем недооценить и ломиться в бой с недолеченным HP.
-        sec = (60.0 / (1.0 + bonus / 100.0)) * 1.15 if bonus > 0 else 60.0
-        sec = max(5.0, min(sec, 600.0))
+    # ---------- РЕГЕН: измеряем ПО ФАКТУ, а не по формуле ----------
+    # Формулу из бонусов надёжно посчитать нельзя: неизвестна база игры и спорно,
+    # входит ли «🎨 Сердце». Поэтому бот САМ замеряет реген по чистым окнам лечения
+    # (без атак между двумя чтениями HP), сглаживает и хранит в regen_calib.json.
+    # Это автоматически учитывает ЛЮБОЙ бонус (в т.ч. Сердце, если он реально влияет).
+    def _load_regen_calib(self):
+        try:
+            with open(self._regen_calib_path, encoding="utf-8") as f:
+                d = json.load(f)
+            sec = float(d.get("sec_per_hp", 0))
+            if 5 <= sec <= 600:
+                return sec, int(d.get("samples", 0))
+        except (OSError, ValueError, TypeError):
+            pass
+        return None, 0
+
+    def _save_regen_calib(self, sec, samples):
+        try:
+            with open(self._regen_calib_path, "w", encoding="utf-8") as f:
+                json.dump({"sec_per_hp": round(sec, 1), "samples": samples,
+                           "updated": time.strftime("%Y-%m-%d %H:%M:%S")}, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _apply_sec_per_hp(self, sec):
+        """Записать сек/HP в рабочее значение И в поле настроек (видно в панели)."""
         self.s["min_per_hp"] = sec / 60.0
-        try:                                   # положить в настройки, чтобы видел в панели
+        try:
             with open(self.settings_path, encoding="utf-8") as f:
                 data = json.load(f)
-            data["sec_per_hp"] = int(round(sec))
-            with open(self.settings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            if data.get("sec_per_hp") != int(round(sec)):
+                data["sec_per_hp"] = int(round(sec))
+                with open(self.settings_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
         except (OSError, ValueError):
             pass
-        log(f"🔄 Авто-реген посчитан ОДИН РАЗ: бонусы +{bonus:.0f}% → ~{sec:.0f} сек/HP "
-            f"(записал в настройки, пересчитывать больше не буду)")
+
+    def _regen_calibrate(self, hp):
+        """Замер регена по ФАКТУ во время лечения. Окно между двумя чтениями HP:
+        - если HP УПАЛ (атаковали) → окно грязное, переставляем якорь, не считаем;
+        - если прошло ≥3 мин и набрано ≥6 HP → чистый замер, сглаживаем и пишем в файл.
+        Длинное окно = стабильно (без дёрганья, на которое жаловался Максим)."""
+        if hp is None:
+            return
+        now = time.time()
+        a = self._heal_anchor
+        if a is None or hp < a[1]:            # старт лечения или после удара по нам — новый якорь
+            self._heal_anchor = (now, hp)
+            return
+        dt, dhp = now - a[0], hp - a[1]
+        if dt < 180 or dhp < 6:               # окно ещё короткое — ждём, якорь не трогаем
+            return
+        measured = dt / dhp                   # секунд на 1 HP ПО ФАКТУ
+        self._heal_anchor = (now, hp)         # следующий замер — от текущей точки
+        if not (5 <= measured <= 200):
+            return
+        cur = float(self.s["min_per_hp"]) * 60.0
+        sec, n = self._load_regen_calib()
+        n = (n or 0) + 1
+        smoothed = measured if sec is None else (sec * 0.6 + measured * 0.4)
+        smoothed = max(5.0, min(smoothed, 300.0))
+        self._save_regen_calib(smoothed, n)
+        self._apply_sec_per_hp(smoothed)
+        log(f"  📐 замер регена по факту: {measured:.0f} с/HP "
+            f"(за {int(dt)}с набрал {dhp} HP) → рабочее значение ~{smoothed:.0f} с/HP [замер #{n}]")
+
+    async def update_regen_from_main(self):
+        """Авто-реген на старте: если уже есть ЗАМЕРЕННОЕ значение (regen_calib.json) —
+        берём его (это факт). Если замеров ещё не было — ставим грубую оценку по
+        бонусам как СТАРТ, дальше бот уточнит её замерами во время лечения.
+        Значение пишется в поле «сек на 1 HP» (видно в панели). Хочешь своё —
+        выключи галочку авто-регена и впиши руками, бот трогать не будет."""
+        if not self._regen_auto:
+            return
+        sec, n = self._load_regen_calib()
+        if sec is not None:
+            self._apply_sec_per_hp(sec)
+            log(f"🔄 Реген взят из ЗАМЕРОВ: ~{sec:.0f} сек/HP (усреднено по {n} замерам факта). "
+                f"Уточняю дальше во время лечения.")
+            return
+        terr = await self.open_territory()
+        bonus = parse_regen_bonus(terr.message or "") if terr else 0
+        sec = 60.0 / (1.0 + bonus / 100.0) if bonus > 0 else 45.0
+        sec = max(5.0, min(sec, 600.0))
+        self._apply_sec_per_hp(sec)
+        log(f"🔄 Реген: стартовая оценка по бонусам +{bonus:.0f}% → ~{sec:.0f} сек/HP. "
+            f"Это ПРИКИДКА — бот замерит фактический реген при первом лечении и уточнит.")
 
     # ---------- АВТО-КАЗНА (доход → депозит → реинвест) ----------
     async def collect_and_bank(self):
@@ -1279,6 +1339,7 @@ class Smasher:
                 hp = my_after if isinstance(my_after, int) else 0
                 self._healing = True
                 self._heal_start = time.time()
+                self._heal_anchor = (time.time(), hp)   # старт чистого окна замера регена
                 log(f"🩸 Игра: HP {hp} < {s['my_min_hp']} — мало для атаки. Ухожу на лечение "
                     f"до {s['my_recover_to']} (перечитываю HP ~каждые {s['heal_recheck']}с).")
                 return hp
@@ -1921,6 +1982,7 @@ class Smasher:
                 self._healing = False
                 log("❤️ Потолок лечения истёк — пробую продолжить (проверю HP в бою).")
             else:
+                self._regen_calibrate(hp)          # замеряем фактический реген (учтёт Сердце и всё)
                 left_hp = s["my_recover_to"] - (hp or 0)
                 rem_min = max(1.0, left_hp * s["min_per_hp"])            # оценка минут до полного
                 rem_s = rem_min * 60.0
@@ -1945,6 +2007,7 @@ class Smasher:
         if my_hp is not None and my_hp <= s["my_min_hp"]:
             self._healing = True
             self._heal_start = time.time()
+            self._heal_anchor = (time.time(), my_hp)   # старт чистого окна замера регена
             log(f"🩸 Мои HP {my_hp} ≤ {s['my_min_hp']} — ухожу на лечение до {s['my_recover_to']}.")
             self.interim_report("ушёл на лечение")   # промежуточный итог по ходу дела
             # 🏦 раз уж не бьём и регенимся — заодно собираем казну (но не чаще раза в 10 мин)

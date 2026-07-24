@@ -24,3 +24,4 @@ __pycache__/
 *.pyc
 .DS_Store
 auth_log.txt
+regen_calib.json
