@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.24-6"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.24-7"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -338,6 +338,10 @@ MODULES = [
                      "options": ["Да", "Нет"], "default": "Да"}],
         "actions": [{"id": "run", "label": "🔎 Найти цели"},
                     {"id": "dry", "label": "Холостой (dry-run)"}],
+    },
+    {
+        "id": "game", "title": "Барская игра", "emoji": "🎮", "kind": "game",
+        "desc": "Мини-игра: содержи холопа, богатей, не доводи до бунта. Ачивки копятся между забегами.",
     },
     {
         "id": "scout", "title": "Разведка (КД/щиты)", "emoji": "📊", "kind": "oneshot",
@@ -1027,6 +1031,62 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    pre.log{max-height:56vh;min-height:320px}
  }
  @media (max-width:430px){.brand-tx{font-size:15px}.btns button{min-width:0}}
+ /* ── 🎮 БАРСКАЯ ИГРА ── */
+ #gRoot{font-size:14px}
+ .g-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+ .g-kick{font-size:10px;letter-spacing:.28em;color:var(--accent);text-transform:uppercase}
+ .g-h1{font-size:40px;line-height:1;font-weight:750;letter-spacing:-.01em;margin-top:6px;color:var(--ink)}
+ .g-sub{font-style:italic;font-size:14px;color:var(--mut);margin-top:5px}
+ .g-hud{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+ .g-hud .g-card{flex:1;min-width:118px;padding:11px 14px}
+ .g-big{font-size:27px;line-height:1.15;margin-top:2px;color:var(--ink);font-weight:700}
+ .g-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
+ .g-grid{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+ .g-face{aspect-ratio:1/1;border-radius:12px;border:1px solid var(--line);background:var(--panel2);
+   display:grid;place-items:center;padding:12px;margin-top:10px}
+ .g-face canvas{width:100%;image-rendering:pixelated}
+ .g-name{font-size:19px;font-weight:700;margin-top:10px;color:var(--ink)}
+ .g-dim{font-size:12px;color:var(--mut);margin-top:2px;line-height:1.4}
+ .g-bar{height:10px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+ .g-bar i{display:block;height:100%;border-radius:5px;transition:width .4s cubic-bezier(.4,1.3,.5,1)}
+ .g-ach{display:flex;flex-wrap:wrap;gap:6px}
+ .g-a{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;font-size:16px;cursor:help;
+   background:var(--panel2);border:1px solid var(--line);filter:grayscale(1);opacity:.32;transition:.2s}
+ .g-a.on{filter:none;opacity:1;border-color:var(--accent);box-shadow:0 0 12px -3px var(--accent)}
+ .g-modes{display:flex;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:4px}
+ .g-modes button{font-size:12px;padding:7px 12px;border-radius:7px;border:0;cursor:pointer;background:transparent;color:var(--mut);box-shadow:none}
+ .g-modes button.on{background:var(--accent);color:#2a1206}
+ .g-cmds{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+ .g-cmds button{text-align:left;padding:13px;border-radius:11px;border:1px solid var(--line);
+   background:var(--panel2);color:var(--ink);box-shadow:none;transition:transform .12s,border-color .2s}
+ .g-cmds button:hover:not(:disabled){transform:translateY(-2px);border-color:var(--accent)}
+ .g-cmds button:disabled{opacity:.4;cursor:default}
+ .g-cl{font-size:14.5px;font-weight:650;margin-top:7px}
+ .g-ch{font-size:10.5px;color:var(--mut);margin-top:2px;line-height:1.3}
+ .g-red{margin-top:13px;width:100%;font-size:19px;font-weight:700;padding:15px;border-radius:12px;
+   border:1px solid color-mix(in srgb,var(--red) 60%,transparent);color:#ffe6e2;
+   background:linear-gradient(180deg,#c0433a,#8f2a22)}
+ .g-red span{display:block;font-size:10px;letter-spacing:.13em;opacity:.85;margin-top:4px;text-transform:uppercase;font-weight:400}
+ .g-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ .g-verd{font-style:italic;font-size:17px;color:var(--ink);margin-top:7px;line-height:1.35}
+ .g-btn-ghost{background:transparent;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);
+   color:var(--accent);font-size:12px;letter-spacing:.06em;text-transform:uppercase;box-shadow:none;min-width:130px}
+ .g-log{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+ .g-lines{display:flex;flex-direction:column;gap:7px;max-height:190px;overflow:auto;font-size:12.5px;line-height:1.4}
+ .g-lines div{display:flex;gap:11px;color:var(--ink)}
+ .g-lines span{color:var(--faint);flex-shrink:0;font-family:var(--mono);font-size:11.5px}
+ .g-modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:80;padding:20px}
+ .g-dial{max-width:460px;width:100%;background:var(--panel);border:1px solid var(--accent);border-radius:18px;
+   padding:24px;box-shadow:0 30px 70px #000b;animation:rise .3s both}
+ .g-mt{font-size:26px;font-weight:750;color:var(--ink);margin-top:7px;line-height:1.15}
+ .g-mm{font-size:14px;color:var(--mut);margin-top:9px;line-height:1.5}
+ .g-choice{width:100%;text-align:left;padding:12px 15px;border-radius:11px;border:1px solid var(--line);
+   background:var(--panel2);color:var(--ink);font-size:13.5px;box-shadow:none;transition:.18s}
+ .g-choice:hover{border-color:var(--accent)}
+ .g-toast{position:fixed;right:20px;bottom:20px;z-index:90;display:flex;align-items:center;gap:12px;
+   background:var(--panel);border:1px solid var(--accent);border-radius:14px;padding:13px 17px;
+   box-shadow:var(--shadow);opacity:0;transform:translateY(14px);transition:.35s;pointer-events:none;max-width:330px}
+ @media (max-width:900px){.g-grid{grid-template-columns:1fr}.g-two{grid-template-columns:1fr}.g-h1{font-size:30px}}
 </style></head><body>
 <div class="app">
 <aside class="rail">
@@ -1070,6 +1130,7 @@ function swHTML(id,label){
 }
 function render(mid){
   active=mid; if(timer) clearInterval(timer);
+  if(window.GAME) GAME.stop();          // уходим со вкладки — глушим таймеры игры
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.id===mid));
   const m=CFG.find(x=>x.id===mid); const main=$('#main');
   const head=`<div class="head">
@@ -1081,6 +1142,7 @@ function render(mid){
       <div class="board-wrap"><table><thead><tr><th>Цель</th><th>Состояние</th><th>Обновл.</th></tr></thead><tbody id="board"></tbody></table></div>`;
     pollStatus(); timer=setInterval(pollStatus,2000); return;
   }
+  if(m.kind==='game'){ main.innerHTML=head+GAME.html(); GAME.start(); return; }
   let ctl='';
   if(m.kind==='loop'){
     ctl=`<details class="acc" open>
@@ -1419,6 +1481,430 @@ async function init(){
   }
   cv.addEventListener('dblclick', roam);
   setInterval(function(){ if(!roaming && document.visibilityState!=='hidden' && Math.random()<0.3) roam(); }, 42000);
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   🎮 БАРСКАЯ ИГРА «ПУЛЬТ ХОЛОПА» — тамагочи-сатира про барина и холопа.
+   Цель: дожить до дня 20 или набить 1000 🪙, не доведя холопа до бунта.
+   Ачивки копятся в браузере (localStorage) между забегами.
+   ══════════════════════════════════════════════════════════════════════════ */
+const GAME = (function(){
+const LS_ACH='holop_ach_v1', LS_BEST='holop_best_v1', LS_RUNS='holop_runs_v1';
+const clamp=v=>Math.max(0,Math.min(100,Math.round(v)));
+const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+
+/* ─────────── АЧИВКИ (копятся навсегда) ─────────── */
+const ACH=[
+ {id:'saltychiha',ic:'🩸',t:'Салтычиха',d:'Довести до бунта в тираническом режиме'},
+ {id:'saint',ic:'👼',t:'Святой барин',d:'Финал с моралью и лояльностью 90+'},
+ {id:'rich',ic:'👑',t:'Мироед',d:'Набить 1000 🪙'},
+ {id:'survivor',ic:'🏆',t:'Год прожит',d:'Дотянуть до дня 20'},
+ {id:'freedom',ic:'🕊️',t:'Вольная',d:'Отпустить холопа на волю'},
+ {id:'wedding',ic:'💒',t:'Сваха',d:'Женить холопа'},
+ {id:'steward',ic:'📜',t:'Кадровик',d:'Сделать холопа управляющим'},
+ {id:'ruin',ic:'⚰️',t:'Банкрот',d:'Разориться в ноль'},
+ {id:'coffee',ic:'☕',t:'Бариста',d:'Подать кофе 20 раз за забег'},
+ {id:'overtime',ic:'⏻',t:'Эффективный менеджер',d:'Нажать сверхурочку 10 раз'},
+ {id:'literate',ic:'📚',t:'Просветитель',d:'Обучить холопа грамоте'},
+ {id:'brew',ic:'🍺',t:'Винокур',d:'Поставить брагу'},
+ {id:'nobeat',ic:'🤝',t:'Пацифист',d:'Победить, ни разу не дав нагоняй'},
+ {id:'speedrun',ic:'⚡',t:'Спидран',d:'1000 🪙 быстрее дня 10'},
+ {id:'comeback',ic:'🔄',t:'С того света',d:'Поднять мораль с 5 до 80'},
+ {id:'ghost',ic:'👻',t:'Барабашка',d:'Застать привидение в поместье'},
+ {id:'bear',ic:'🐻',t:'Медвежья услуга',d:'Пережить медведя'},
+ {id:'tsar',ic:'🎺',t:'Государев глаз',d:'Принять ревизора'},
+ {id:'love',ic:'💘',t:'Амур',d:'Холоп влюбился'},
+ {id:'strike',ic:'✊',t:'Профсоюз',d:'Холоп объявил забастовку'},
+ {id:'fire',ic:'🔥',t:'Погорелец',d:'Пережить пожар'},
+ {id:'allmodes',ic:'🎭',t:'Гибкий подход',d:'Сменить все три режима за забег'},
+ {id:'hoarder',ic:'🧺',t:'Скопидом',d:'Ни разу не выписать премию и победить'},
+ {id:'veteran',ic:'🎖️',t:'Ветеран',d:'Сыграть 10 забегов'},
+];
+const loadAch=()=>{try{return JSON.parse(localStorage.getItem(LS_ACH))||{}}catch(e){return{}}};
+const saveAch=o=>{try{localStorage.setItem(LS_ACH,JSON.stringify(o))}catch(e){}};
+const getBest=()=>{try{return +localStorage.getItem(LS_BEST)||0}catch(e){return 0}};
+const setBest=v=>{try{localStorage.setItem(LS_BEST,v)}catch(e){}};
+const getRuns=()=>{try{return +localStorage.getItem(LS_RUNS)||0}catch(e){return 0}};
+const bumpRuns=()=>{try{const n=getRuns()+1;localStorage.setItem(LS_RUNS,n);return n}catch(e){return 0}};
+
+/* ─────────── СОБЫТИЯ ─────────── */
+/* d: дельты; f: выставить флаг; need: требуемый флаг; rare: редкое; once: один раз за забег */
+const EVENTS=[
+ {t:'Холоп просит выходной',m:'«Барин, дай продыху — спина не казённая, а своя».',c:[
+   {l:'Дать выходной',lg:'Выходной дан. Холоп кланяется до земли.',d:{moral:16,loyalty:12,energy:20,productivity:-8}},
+   {l:'Отказать',lg:'В выходном отказано. Холоп мрачно берётся за вилы… то есть за дело.',d:{moral:-14,loyalty:-8,productivity:12}}]},
+ {t:'Гонец: недоимка!',m:'Прискакал гонец — с вас оброк в казну княжью. И побыстрее.',c:[
+   {l:'Заплатить (−60 🪙)',lg:'Оброк уплачен. Казна похудела, честь цела.',d:{gold:-60}},
+   {l:'Отправить холопа отработать',lg:'Холоп отправлен отрабатывать. Вернулся злой и мокрый.',d:{energy:-22,moral:-6,productivity:6}},
+   {l:'Спрятаться в погребе',lg:'Барин просидел в погребе три часа. Гонец уехал. Позор, но бесплатно.',d:{rep:-12,moral:6}}]},
+ {t:'Холоп нашёл клад',m:'Копал огород под репу — наткнулся на горшок с монетами.',c:[
+   {l:'Забрать всё себе (+90 🪙)',lg:'Клад изъят в казну. Холоп затаил обиду размером с горшок.',d:{gold:90,loyalty:-16,moral:-8}},
+   {l:'Поделить по-честному (+45 🪙)',lg:'Клад поделён. Холоп растроган и почти прослезился.',d:{gold:45,moral:18,loyalty:14,rep:8}},
+   {l:'Отдать всё холопу',lg:'Барин отдал клад целиком. Холоп не понял, но запомнил.',d:{moral:26,loyalty:30,rep:14}}]},
+ {t:'Сосед переманивает',m:'Соседний барин сулит холопу тёплую избу и щи с мясом.',c:[
+   {l:'Поднять паёк (−40 🪙)',lg:'Паёк поднят. Холоп остаётся верен щам.',d:{gold:-40,loyalty:22,moral:10}},
+   {l:'Пригрозить соседу',lg:'Сосед обиделся, холоп напуган. Все несчастны.',d:{loyalty:8,moral:-18,rep:-10}},
+   {l:'Предложить соседу купить (+120 🪙)',lg:'Торг вышел знатный. Холоп вернулся сам через день — не понравилось.',d:{gold:120,loyalty:-25,moral:-15}}]},
+ {t:'Холоп занемог',m:'Кашляет, жар, бормочет про светлое будущее.',c:[
+   {l:'Позвать лекаря (−50 🪙)',lg:'Лекарь поставил на ноги и выписал счёт.',d:{gold:-50,energy:30,moral:14},f:'lekar'},
+   {l:'«Само пройдёт»',lg:'Холоп через силу вышел на работу. Кашляет назло.',d:{energy:-18,moral:-16,productivity:8}},
+   {l:'Лечить брагой',lg:'Народная медицина. Холоп здоров, но песни пел до утра.',d:{energy:18,moral:20,productivity:-14}}]},
+ {t:'Праздник урожая',m:'Вся деревня гуляет. Холоп косится на околицу, как кот на сметану.',c:[
+   {l:'Отпустить гулять',lg:'Холоп гуляет и славит доброго барина на всю деревню.',d:{moral:22,loyalty:16,productivity:-10,rep:10}},
+   {l:'Работать в праздник (+80 🪙)',lg:'Пока все гуляют — холоп куёт монету и обиду.',d:{gold:80,moral:-20,energy:-14,task:2,rep:-8}}]},
+ {t:'Ревизор из губернии',m:'Карета у ворот. Государев глаз приехал смотреть, как вы тут хозяйствуете.',ach:'tsar',c:[
+   {l:'Накрыть стол (−100 🪙)',lg:'Ревизор доволен, ел много, писал мало.',d:{gold:-100,rep:25}},
+   {l:'Показать всё как есть',lg:'Ревизор всё записал. Как есть — оказалось так себе.',d:{rep:-15,moral:8}},
+   {l:'Выставить холопа за главного',lg:'Холоп провёл экскурсию блестяще. Ревизор в восторге, холоп горд.',d:{rep:20,moral:16,loyalty:14}}]},
+ {t:'Медведь в малиннике',m:'В барском малиннике поселился медведь. Сидит, ест, никого не боится.',ach:'bear',c:[
+   {l:'Послать холопа прогнать',lg:'Холоп вернулся без штанов, но с медовухой. Медведь ушёл сам.',d:{energy:-25,moral:-10,rep:12}},
+   {l:'Оставить медведя',lg:'Медведь прижился. Теперь он тоже холоп, только не работает.',d:{moral:14,productivity:-8}},
+   {l:'Идти самому с рогатиной',lg:'Барин вышел на медведя. Медведь ушёл из уважения. Холоп в шоке.',d:{rep:30,loyalty:25,moral:18}}]},
+ {t:'Привидение в западном крыле',m:'Ночью что-то воет и гремит цепями. Холоп отказывается туда ходить.',rare:1,ach:'ghost',c:[
+   {l:'Пойти проверить',lg:'Это был кот в ведре. Кот теперь тоже на довольствии.',d:{moral:12,energy:-8}},
+   {l:'Запереть крыло навсегда',lg:'Крыло заперто. Теперь там живёт легенда и, кажется, кот.',d:{moral:-8,rep:8}},
+   {l:'Брать деньги за экскурсии (+70 🪙)',lg:'Соседи платят, чтобы посмотреть на «духа». Гениально.',d:{gold:70,rep:15,moral:6}}]},
+ {t:'Холоп влюбился',m:'Ходит, вздыхает, вместо работы вырезает сердечки на заборе.',ach:'love',f:'love',c:[
+   {l:'Благословить',lg:'Барин благословил. Холоп светится и работает за двоих.',d:{moral:28,loyalty:24,productivity:10}},
+   {l:'Запретить и загрузить работой',lg:'Любовь запрещена указом. Холоп работает молча и страшно.',d:{moral:-26,loyalty:-18,productivity:16}}]},
+ {t:'Забастовка одного холопа',m:'Сел на крыльцо, скрестил руки: «Не выйду, пока не будет справедливости».',ach:'strike',c:[
+   {l:'Выслушать требования',lg:'Требования: щи гуще и выходной. Барин согласился. Мир восстановлен.',d:{moral:24,loyalty:20,gold:-30,productivity:-6}},
+   {l:'Переждать',lg:'Холоп сидел полдня, замёрз и вышел сам. Осадочек остался.',d:{moral:-12,loyalty:-10,productivity:4}},
+   {l:'Позвать урядника (−30 🪙)',lg:'Урядник пришёл, посмотрел, взял денег и ушёл. Ничего не изменилось.',d:{gold:-30,moral:-18,loyalty:-16,rep:-10}}]},
+ {t:'Пожар в овине!',m:'Горит овин. Огонь весёлый, ветер попутный.',rare:1,ach:'fire',c:[
+   {l:'Тушить всем миром',lg:'Потушили. Холоп вынес из огня поросёнка и стал героем деревни.',d:{energy:-30,moral:20,loyalty:22,rep:18,gold:-40}},
+   {l:'Спасать казну',lg:'Казна цела, овин нет. Холоп смотрел молча — это было хуже криков.',d:{gold:60,moral:-30,loyalty:-25}}]},
+ {t:'Бродячий грамотей',m:'У ворот стоит человек с книгой и предлагает обучить холопа буквам.',c:[
+   {l:'Обучить (−70 🪙)',lg:'Холоп освоил буквы. Теперь читает вывески и барские записки.',d:{gold:-70,moral:20,productivity:12},f:'literate',ach:'literate'},
+   {l:'Прогнать грамотея',lg:'«Много будешь знать — плохо будешь спать». Грамотей ушёл ворча.',d:{moral:-10,rep:-6}}]},
+ {t:'Холоп читает вслух',m:'Грамотный холоп нашёл вашу расходную книгу и читает её вслух. С выражением.',need:'literate',once:1,c:[
+   {l:'Сделать управляющим',lg:'Холоп назначен управляющим. Считает лучше барина. Тревожно.',d:{moral:30,loyalty:26,productivity:22,gold:50},f:'steward'},
+   {l:'Отобрать книгу',lg:'Книга отобрана. Холоп уже всё запомнил — память у грамотных цепкая.',d:{moral:-16,loyalty:-14}}]},
+ {t:'Сваты у ворот',m:'Приехали сваты из соседней деревни — за вашего холопа. Он краснеет.',need:'love',once:1,c:[
+   {l:'Сыграть свадьбу (−150 🪙)',lg:'Свадьба гуляла три дня. Холоп счастлив, казна пуста, все довольны.',d:{gold:-150,moral:40,loyalty:40,rep:25},f:'wed'},
+   {l:'Отказать сватам',lg:'Сваты уехали. Холоп не сказал ни слова, но взгляд запомнился надолго.',d:{moral:-32,loyalty:-30}}]},
+ {t:'Кот украл сметану',m:'Барский кот опрокинул кринку. Холоп стоит рядом с виноватым видом.',c:[
+   {l:'Обвинить холопа',lg:'Холоп наказан за кота. Кот доволен. Справедливость плачет.',d:{moral:-20,loyalty:-14,productivity:6}},
+   {l:'Обвинить кота',lg:'Кот приговорён к лишению сметаны. Холоп еле сдержал смех.',d:{moral:16,loyalty:10}}]},
+ {t:'Соседи зовут на бал',m:'Приглашение на бал. Ехать надо в приличном, а приличное в закладе.',c:[
+   {l:'Ехать (−90 🪙)',lg:'Барин блистал. Про холопа рассказывал так, будто их у него сорок.',d:{gold:-90,rep:28,moral:6}},
+   {l:'Остаться дома',lg:'Барин остался дома и весь вечер играл с холопом в шашки. Тот выиграл.',d:{moral:18,loyalty:16,rep:-8}}]},
+ {t:'Брага дозрела',m:'В погребе дозрела брага. Запах стоит на всю усадьбу.',need:'brew',once:1,c:[
+   {l:'Разделить с холопом',lg:'Пили вместе, пели, обнимались. Утром оба делали вид, что ничего не было.',d:{moral:34,loyalty:30,productivity:-16,energy:-12}},
+   {l:'Продать (+130 🪙)',lg:'Брага ушла на ярмарке влёт. Холоп смотрел вслед бочке как на родню.',d:{gold:130,moral:-14}}]},
+ {t:'Волки у околицы',m:'Ночью воют волки. Скотина беспокоится, холоп не спит.',c:[
+   {l:'Ставить капканы (−40 🪙)',lg:'Капканы поставлены. Поймался соседский пёс. Сосед обижен.',d:{gold:-40,rep:-10,moral:6}},
+   {l:'Жечь костры всю ночь',lg:'Всю ночь жгли костры. Волки ушли, холоп не спал.',d:{energy:-24,moral:8,loyalty:10}}]},
+ {t:'Барин заболел',m:'Вы слегли. Хозяйство осталось на холопе.',rare:1,c:[
+   {l:'Довериться холопу',lg:'Холоп справился, ничего не украл и даже приумножил. Совестно немножко.',d:{gold:70,loyalty:26,moral:20,productivity:14}},
+   {l:'Руководить из постели',lg:'Барин руководил хрипом и жестами. Вышло скверно.',d:{productivity:-14,moral:-10,energy:-10}}]},
+ {t:'Цыгане с медведем',m:'Табор встал у реки. Предлагают погадать и продать медведя.',rare:1,c:[
+   {l:'Погадать (−25 🪙)',lg:'Нагадали дальнюю дорогу и казённый дом. Холоп побледнел.',d:{gold:-25,moral:-6,rep:6}},
+   {l:'Купить медведя (−80 🪙)',lg:'Медведь куплен. Работать отказался, но выглядит внушительно.',d:{gold:-80,rep:20,moral:12}}]},
+ {t:'Урожай сам-семь',m:'Уродилось так, что телеги не хватает. Небывалое дело.',c:[
+   {l:'Продать всё (+150 🪙)',lg:'Продано на ярмарке. Казна звенит, амбар пуст.',d:{gold:150,moral:-8,energy:-16}},
+   {l:'Часть раздать деревне',lg:'Раздали соседям. Про доброго барина поют песни. Правда, без имени.',d:{gold:60,rep:30,moral:20,loyalty:18}}]},
+ {t:'Холоп просит вольную',m:'Встал на колени: «Барин, отпусти. Отработал я своё сполна».',need:'longrun',once:1,c:[
+   {l:'Дать вольную',lg:'Вольная подписана. Холоп ушёл, обернувшись трижды.',d:{},f:'freed'},
+   {l:'Отказать',lg:'В вольной отказано. Холоп встал, поклонился и больше не улыбался.',d:{moral:-30,loyalty:-20,productivity:10}},
+   {l:'Отказать, но поднять паёк',lg:'Компромисс по-барски: свободы нет, зато щи гуще.',d:{gold:-60,moral:6,loyalty:8}}]},
+ {t:'Ярмарка в уезде',m:'Большая ярмарка. Можно выгодно продать, а можно и прогулять.',c:[
+   {l:'Торговать (+100 🪙)',lg:'Наторговали знатно. Холоп таскал мешки и считал в уме.',d:{gold:100,energy:-20,productivity:8}},
+   {l:'Гулять с холопом (−50 🪙)',lg:'Ели пряники, смотрели на карусель. Лучший день в году.',d:{gold:-50,moral:30,loyalty:26}}]},
+ {t:'Донос на барина',m:'Кто-то написал в губернию, что вы холопа мучаете. Требуют объяснений.',c:[
+   {l:'Откупиться (−120 🪙)',lg:'Бумага утеряна в пути. Так бывает.',d:{gold:-120,rep:-6}},
+   {l:'Позвать холопа свидетелем',lg:'Холоп сказал правду. Правда оказалась в вашу пользу — повезло.',d:{rep:15,loyalty:12,moral:10}}]},
+ {t:'Мороз лютый',m:'Ударил мороз. В людской изба выстыла, дров мало.',c:[
+   {l:'Отдать барские дрова',lg:'Барин мёрз в кабинете, холоп спал в тепле. Небывало.',d:{moral:30,loyalty:28,energy:14,rep:10}},
+   {l:'Пусть терпит',lg:'Холоп спал в тулупе и обиде.',d:{moral:-22,energy:-20,loyalty:-14}}]},
+ {t:'Заезжий актёр',m:'Труппа даёт представление. Холоп никогда не видел театра.',c:[
+   {l:'Свести на спектакль (−35 🪙)',lg:'Холоп плакал на трагедии и хлопал громче всех.',d:{gold:-35,moral:26,loyalty:16}},
+   {l:'Не до глупостей',lg:'Театр отменяется. Работа — вот настоящее искусство.',d:{moral:-12,productivity:8}}]},
+ {t:'Найдены барские долги',m:'В сундуке нашлись расписки покойного батюшки. Долгов больше, чем ожидалось.',rare:1,c:[
+   {l:'Платить честно (−140 🪙)',lg:'Долги уплачены. Имя чисто, кошелёк пуст.',d:{gold:-140,rep:25,moral:8}},
+   {l:'Сжечь расписки',lg:'Бумаги горят хорошо. Совесть — хуже.',d:{rep:-25,moral:-10}}]},
+ {t:'Холоп изобрёл машину',m:'Собрал из бочки и колеса штуку, которая сама воду качает. Вроде работает.',rare:1,need:'literate',c:[
+   {l:'Поддержать (−60 🪙)',lg:'Машина заработала! Продуктивность взлетела, соседи ходят смотреть.',d:{gold:-60,productivity:30,moral:26,rep:22}},
+   {l:'Запретить самодеятельность',lg:'Машина разобрана. Холоп молча смотрел, как ломают его бочку.',d:{moral:-28,loyalty:-20}}]},
+];
+
+/* ─────────── ФИНАЛЫ ─────────── */
+function ending(s){
+ if(s.flags.freed) return {w:1,t:'ВОЛЬНАЯ',ic:'🕊️',ach:'freedom',m:'Вы отпустили холопа. Он ушёл свободным, а вы остались с пустым домом и странным теплом в груди. Возможно, это и есть победа.'};
+ if(s.flags.wed) return {w:1,t:'СВАДЬБА',ic:'💒',ach:'wedding',m:'Холоп женился, поселился в новой избе и наплодил вам ещё холопов. Круговорот в природе.'};
+ if(s.flags.steward) return {w:1,t:'УПРАВЛЯЮЩИЙ',ic:'📜',ach:'steward',m:'Холоп ведёт хозяйство лучше вас. Вы теперь просто живёте здесь. И вам, честно говоря, нравится.'};
+ if(s.st.moral<=0) return {w:0,t:'БУНТ',ic:'🔥',m:'Холоп поднял бунт, забрал вилы и ушёл в лес. Говорят, там теперь целая артель таких.'};
+ if(s.st.loyalty<=0) return {w:0,t:'ПОБЕГ',ic:'🏃',m:'Холоп сбежал к соседу — там паёк жирнее и барин не орёт по утрам.'};
+ if(s.st.energy<=0) return {w:0,t:'ЗАГНАЛ',ic:'💀',ach:null,m:'Холоп слёг окончательно. Лекарь развёл руками, сосед покачал головой, а вы всё считаете убытки.'};
+ if(s.gold<=0&&s.day>4) return {w:0,t:'РАЗОРЕНИЕ',ic:'⚰️',ach:'ruin',m:'Казна пуста, имение заложено. Холоп предложил вам работу. Вы думаете.'};
+ if(s.gold>=1000) return {w:1,t:'МИРОЕД',ic:'👑',ach:'rich',m:'Тысяча монет! Соседи шепчутся, холоп худеет, но какая казна!'};
+ if(s.day>=20) return {w:1,t:'ГОД ПРОЖИТ',ic:'🏆',ach:'survivor',m:'Двадцать дней вашего чуткого руководства. Холоп жив, вы тоже. Это успех.'};
+ return null;
+}
+
+/* ─────────── СОСТОЯНИЕ ─────────── */
+let S=null, iv=null, fiv=null;
+function fresh(){
+ return {st:{moral:70,energy:80,loyalty:55,productivity:45},rep:50,mode:'normal',
+  gold:60,day:1,tick:0,tasks:0,run:true,ev:null,over:null,flags:{},
+  cnt:{coffee:0,overtime:0,scold:0,bonus:0,modes:{}},used:{},minMoral:100,
+  log:[{t:now(),msg:'Холоп доставлен. День 1. С Богом.'}]};
+}
+function say(msg){ S.log=[{t:now(),msg},...S.log].slice(0,50); }
+function unlock(id){
+ if(!id) return; const a=loadAch(); if(a[id]) return;
+ a[id]=Date.now(); saveAch(a);
+ const def=ACH.find(x=>x.id===id); if(!def) return;
+ say('🏅 АЧИВКА: '+def.ic+' «'+def.t+'» — '+def.d);
+ toast(def);
+}
+function toast(def){
+ const el=document.getElementById('gAchToast'); if(!el) return;
+ el.innerHTML='<div style="font-size:26px">'+def.ic+'</div><div><div style="font-weight:700">Ачивка получена</div><div style="font-size:12.5px;opacity:.85">'+def.t+' — '+def.d+'</div></div>';
+ el.style.opacity='1'; el.style.transform='translateY(0)';
+ clearTimeout(el._h); el._h=setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(14px)';},4200);
+}
+
+/* ─────────── МЕХАНИКА ─────────── */
+const MODEF={humane:{dec:.6,gold:.8},normal:{dec:1,gold:1},tyrant:{dec:1.5,gold:1.4}};
+function apply(d,msg){
+ if(!S||S.over) return;
+ const mode=S.mode;
+ const g=k=>{let v=d[k]||0; if(mode==='humane')v=v>0?v*1.6:v*0.5; if(mode==='tyrant')v=v>0?v*0.6:v*1.7; return v;};
+ const before=S.st.moral;
+ S.st.moral=clamp(S.st.moral+g('moral'));
+ S.st.energy=clamp(S.st.energy+g('energy'));
+ S.st.loyalty=clamp(S.st.loyalty+g('loyalty'));
+ S.st.productivity=clamp(S.st.productivity+g('productivity'));
+ if(d.rep) S.rep=clamp(S.rep+d.rep);
+ S.gold=Math.max(0,S.gold+(d.gold||0));
+ S.tasks+=d.task||0;
+ S.minMoral=Math.min(S.minMoral,S.st.moral);
+ if(S.minMoral<=5&&S.st.moral>=80) unlock('comeback');
+ if(S.st.moral<=6&&before>6) say('⚠ Холоп на грани бунта!');
+ if(S.st.energy<=6) say('⚠ Холоп валится с ног.');
+ if(msg) say(msg);
+ checkOver(); draw();
+}
+function checkOver(){
+ const e=ending(S); if(!e) return;
+ S.over=e; S.run=false;
+ if(e.ach) unlock(e.ach);
+ if(e.t==='БУНТ'&&S.mode==='tyrant') unlock('saltychiha');
+ if(e.w&&S.st.moral>=90&&S.st.loyalty>=90) unlock('saint');
+ if(e.w&&S.cnt.scold===0) unlock('nobeat');
+ if(e.w&&S.cnt.bonus===0) unlock('hoarder');
+ if(S.gold>=1000&&S.day<10) unlock('speedrun');
+ if(Object.keys(S.cnt.modes).length>=3) unlock('allmodes');
+ const sc=score(); if(sc>getBest()) setBest(sc);
+ if(bumpRuns()>=10) unlock('veteran');
+ say('🏁 '+e.t);
+}
+function score(){ return S.gold + S.tasks*5 + S.day*15 + Math.round(S.rep/2); }
+
+function tick(){
+ if(!S||!S.run||S.over||S.ev) return;
+ const f=MODEF[S.mode];
+ if(S.st.energy>12&&S.st.productivity>20){
+  const earn=Math.max(1,Math.round(S.st.productivity/10*f.gold));
+  S.gold+=earn; S.tasks++; S.st.energy=clamp(S.st.energy-5);
+  say('🪙 Холоп исполнил поручение: +'+earn+' в казну.');
+ }
+ S.st.moral=clamp(S.st.moral-2*f.dec);
+ S.st.loyalty=clamp(S.st.loyalty-1*f.dec);
+ S.st.energy=clamp(S.st.energy-2);
+ S.st.productivity=clamp(S.st.productivity-(S.mode==='tyrant'?1:2));
+ S.minMoral=Math.min(S.minMoral,S.st.moral);
+ S.tick++;
+ if(S.tick>=6){
+  S.tick=0; S.day++;
+  say('— Настал день '+S.day+' —');
+  if(S.day>=8) S.flags.longrun=1;
+  if(Math.random()<0.62) fireEvent();
+ }
+ checkOver(); draw();
+}
+function fireEvent(){
+ const pool=EVENTS.filter(e=>{
+  if(e.need&&!S.flags[e.need]) return false;
+  if(e.once&&S.used[e.t]) return false;
+  if(e.rare&&Math.random()>0.35) return false;
+  return true;
+ });
+ if(!pool.length) return;
+ const e=pick(pool); S.used[e.t]=1; S.ev=e;
+ if(e.ach) unlock(e.ach);
+ say('❗ '+e.t);
+}
+function choose(i){
+ const ch=S.ev.c[i], d=ch.d||{};
+ ['moral','energy','loyalty','productivity'].forEach(k=>{ if(d[k]) S.st[k]=clamp(S.st[k]+d[k]); });
+ if(d.rep) S.rep=clamp(S.rep+d.rep);
+ S.gold=Math.max(0,S.gold+(d.gold||0));
+ S.tasks+=d.task||0;
+ if(S.ev.f) S.flags[S.ev.f]=1;
+ if(ch.f) S.flags[ch.f]=1;
+ S.ev=null; say(ch.lg);
+ checkOver(); draw();
+}
+function setMode(k,l){ if(S.over) return; S.mode=k; S.cnt.modes[k]=1; say('Режим содержания сменён на «'+l+'».'); draw(); }
+function reset(){ S=fresh(); S.run=true; draw(); }
+
+/* ─────────── КОМАНДЫ ─────────── */
+const CMDS=[
+ {ic:'⛏',l:'Работай!',h:'+темп, −бодрость',d:{productivity:14,energy:-8,moral:-5,gold:3,task:1},m:'Холоп трудится в поте лица.'},
+ {ic:'☕',l:'Подать сбитень',h:'+бодрость (−5 🪙)',d:{energy:20,moral:4,gold:-5},m:'Подан горячий сбитень. Холоп воспрял.',k:'coffee'},
+ {ic:'🛋',l:'Отдых',h:'+бодрость, +мораль',d:{energy:24,moral:9,productivity:-6},m:'Холоп отдыхает. Совесть чиста.'},
+ {ic:'🎖',l:'Похвалить',h:'+мораль, +лояльность',d:{moral:14,loyalty:10},m:'«Молодец!» — холоп зарделся.'},
+ {ic:'🗯',l:'Нагоняй',h:'−мораль, +темп',d:{moral:-15,loyalty:-10,productivity:10,task:1},m:'Холоп получил нагоняй. Работает быстрее, любит меньше.',k:'scold'},
+ {ic:'💰',l:'Премия',h:'+всё (−40 🪙)',d:{moral:20,loyalty:18,productivity:8,gold:-40},m:'Премия выписана. Холоп готов на подвиги.',k:'bonus'},
+ {ic:'📚',l:'Учить грамоте',h:'долго, но окупится (−70 🪙)',d:{gold:-70,moral:18,productivity:10},m:'Холоп сел за буквы. Шевелит губами, но старается.',f:'literate',ach:'literate'},
+ {ic:'🍺',l:'Поставить брагу',h:'риск и веселье (−30 🪙)',d:{gold:-30,moral:12},m:'Брага поставлена в погреб. Ждём-с.',f:'brew',ach:'brew'},
+];
+function cmd(i){
+ const c=CMDS[i]; if(!S||S.over) return;
+ if(c.f&&S.flags[c.f]){ say('Это уже сделано, барин.'); draw(); return; }
+ if(c.k) S.cnt[c.k]=(S.cnt[c.k]||0)+1;
+ if(c.f) S.flags[c.f]=1;
+ if(c.ach) unlock(c.ach);
+ if(S.cnt.coffee>=20) unlock('coffee');
+ apply(c.d,c.m);
+}
+function overtime(){
+ if(!S||S.over) return;
+ S.cnt.overtime++; if(S.cnt.overtime>=10) unlock('overtime');
+ apply({productivity:26,energy:-30,moral:-22,loyalty:-13,gold:10,task:2},
+       'ВСЕ НА СВЕРХУРОЧКУ! Холоп смотрит с укором, но пашет.');
+}
+
+/* ─────────── ПОРТРЕТ ─────────── */
+const FACE=["...K............K...","..KIK..........KIK..","..KIIK........KIIK..",".KGGGGGGGGGGGGGGGGK.",".KGGGGGGGGGGGGGGGGK.",".KGGGGGGGGGGGGGGGGK.",".KGGEEGGGGGGGEEGGGK.",".KGGEWGGGGGGGEWGGGK.",".KGGEEGGGGGGGEEGGGK.",".KGGGGGGNNGGGGGGGGK.",".KGGGGCCCCCCCGGGGGK..","..KGGCCCCCCCCCGGGK..","..KKGGGGGGGGGGGKK...",".KGGGGGGGGGGGGGGGK..","KGGGGGGGGGGGGGGGGGK.","KGGGGCCCCCCCCCGGGGK.","KGGGGCCCCCCCCCGGGGK."];
+let ft=0;
+function drawFace(){
+ const cv=document.getElementById('gFace'); if(!cv||!S) return;
+ const x=cv.getContext('2d');
+ const P={K:'#241a1e',G:'#df8236',D:'#b5651f',I:'#e3a6ac',E:'#3f9fd6',W:'#f6fbff',N:'#cf7280',C:'#f3e7cf',R:'#c8536a',Ch:'#f0a0a8'};
+ x.clearRect(0,0,20,18);
+ const px=(a,b,c)=>{x.fillStyle=c;x.fillRect(a,b,1,1);};
+ ft++; const blink=ft%22<2, m=S.st.moral;
+ const mood=m>=70?'happy':m>=40?'ok':m>=15?'sad':'angry';
+ for(let r=0;r<FACE.length;r++){const row=FACE[r];for(let c=0;c<row.length;c++){const ch=row[c];if(ch==='.')continue;px(c,r,P[ch]);}}
+ px(6,4,P.D);px(8,4,P.D);px(11,4,P.D);
+ const ce=()=>[[4,6],[5,6],[4,7],[5,7],[4,8],[5,8],[13,6],[14,6],[13,7],[14,7],[13,8],[14,8]].forEach(p=>px(p[0],p[1],P.G));
+ if(blink){ce();[[4,7],[5,7],[13,7],[14,7]].forEach(p=>px(p[0],p[1],P.K));}
+ else if(mood==='happy'){ce();[[3,7],[4,6],[5,6],[6,7]].forEach(p=>px(p[0],p[1],P.K));[[12,7],[13,6],[14,6],[15,7]].forEach(p=>px(p[0],p[1],P.K));px(2,10,P.Ch);px(3,10,P.Ch);px(16,10,P.Ch);px(17,10,P.Ch);[[8,12],[9,13],[10,13],[11,12]].forEach(p=>px(p[0],p[1],P.K));px(9,13,P.R);px(10,13,P.R);}
+ else if(mood==='ok'){px(5,7,P.K);px(13,7,P.K);px(9,12,P.K);px(10,12,P.K);}
+ else if(mood==='sad'){ce();[[4,7],[5,7],[13,7],[14,7]].forEach(p=>px(p[0],p[1],P.E));px(5,8,P.K);px(13,8,P.K);px(3,6,P.D);px(15,6,P.D);[[8,13],[9,12],[10,12],[11,13]].forEach(p=>px(p[0],p[1],P.K));}
+ else {ce();[[4,7],[5,7],[13,7],[14,7]].forEach(p=>px(p[0],p[1],P.E));px(5,7,P.K);px(13,7,P.K);[[3,5],[4,6],[5,6]].forEach(p=>px(p[0],p[1],P.K));[[15,5],[14,6],[13,6]].forEach(p=>px(p[0],p[1],P.K));x.fillStyle=P.R;x.fillRect(8,12,4,2);}
+}
+
+/* ─────────── ОТРИСОВКА ─────────── */
+const col=v=>v>=60?'var(--green)':v>=30?'#e6a15a':'var(--red)';
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function verdict(){
+ const st=S.st, worst=Math.min(st.moral,st.energy,st.loyalty);
+ if(worst<=15) return 'Так вы его загоните. Или он вас.';
+ if(st.productivity>=80) return 'Пашет как проклятый. Барин доволен.';
+ if(st.moral>=85&&st.loyalty>=80) return 'Предан до гроба. Идеальный холоп.';
+ if(st.productivity<=20) return 'Прохлаждается. Требуется вмешательство.';
+ if(S.rep>=80) return 'В уезде о вас говорят только хорошее. Подозрительно.';
+ if(S.rep<=20) return 'Соседи здороваются сквозь зубы.';
+ return 'Холоп в рабочем состоянии. Можно наглеть дальше.';
+}
+function draw(){
+ const root=document.getElementById('gRoot'); if(!root||!S) return;
+ const st=S.st, worst=Math.min(st.moral,st.energy,st.loyalty);
+ const lamp=worst<=15?'var(--red)':S.run?'var(--green)':'#e6a15a';
+ const status=S.over?'ИГРА ОКОНЧЕНА':worst<=15?'КРИТИЧЕСКОЕ СОСТОЯНИЕ':S.run?'ХОЛОП НА СВЯЗИ':'ПАУЗА';
+ const mood=st.moral>=70?'сияет':st.moral>=40?'терпит':st.moral>=15?'приуныл':'на грани';
+ const G=[['Мораль',st.moral],['Бодрость',st.energy],['Лояльность',st.loyalty],['Продуктивность',st.productivity],['Репутация',S.rep]];
+ const ach=loadAch(), got=ACH.filter(a=>ach[a.id]).length;
+ root.innerHTML=`
+ <div class="g-top">
+   <div><div class="g-kick">изделие №1 · барский пуск · мини-игра</div>
+     <div class="g-h1">ПУЛЬТ ХОЛОПА</div>
+     <div class="g-sub">«Нажми — и он побежит»</div></div>
+   <div style="display:flex;align-items:center;gap:12px">
+     <span style="width:11px;height:11px;border-radius:50%;background:${lamp};box-shadow:0 0 12px ${lamp}"></span>
+     <span style="font-size:11.5px;letter-spacing:.18em;color:${lamp};text-transform:uppercase">${status}</span></div>
+ </div>
+ <div class="g-hud">
+   ${[['День',S.day],['Казна 🪙',S.gold],['Поручений',S.tasks],['Счёт',score()],['Рекорд',getBest()]].map(h=>
+     `<div class="g-card"><div class="g-kick">${h[0]}</div><div class="g-big">${h[1]}</div></div>`).join('')}
+   <button class="g-btn-ghost" onclick="GAME.pause()">${S.run?'⏸ Пауза':'▶ Продолжить'}</button>
+ </div>
+ <div class="g-grid">
+   <div style="display:flex;flex-direction:column;gap:14px">
+     <div class="g-card">
+       <div class="g-kick">Подопечный</div>
+       <div class="g-face"><canvas id="gFace" width="20" height="18"></canvas></div>
+       <div class="g-name">Холоп-кот №1</div>
+       <div class="g-dim">Настроение: ${mood} · режим: ${({humane:'гуманный',normal:'обычный',tyrant:'тиранический'})[S.mode]}</div>
+     </div>
+     <div class="g-card">
+       <div class="g-kick" style="margin-bottom:10px">Состояние</div>
+       ${G.map(g=>`<div style="margin-bottom:9px">
+         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+           <span style="color:var(--mut)">${g[0]}</span><span style="color:${col(g[1])};font-weight:700">${g[1]}%</span></div>
+         <div class="g-bar"><i style="width:${g[1]}%;background:${col(g[1])}"></i></div></div>`).join('')}
+     </div>
+     <div class="g-card">
+       <div class="g-kick" style="margin-bottom:8px">Ачивки · ${got}/${ACH.length}</div>
+       <div class="g-ach">${ACH.map(a=>`<span class="g-a ${ach[a.id]?'on':''}" title="${esc(a.t)} — ${esc(a.d)}">${a.ic}</span>`).join('')}</div>
+     </div>
+   </div>
+   <div style="display:flex;flex-direction:column;gap:14px">
+     <div class="g-card">
+       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+         <div class="g-kick">Режим содержания</div>
+         <div class="g-modes">${[['humane','Гуманный'],['normal','Обычный'],['tyrant','Тиранический']].map(m=>
+           `<button onclick="GAME.mode('${m[0]}','${m[1]}')" class="${S.mode===m[0]?'on':''}">${m[1]}</button>`).join('')}</div>
+       </div>
+       <div class="g-cmds">${CMDS.map((c,i)=>`<button onclick="GAME.cmd(${i})" ${c.f&&S.flags[c.f]?'disabled':''}>
+         <div style="font-size:21px;line-height:1">${c.ic}</div>
+         <div class="g-cl">${c.l}</div><div class="g-ch">${c.h}</div></button>`).join('')}</div>
+       <button class="g-red" onclick="GAME.overtime()">⏻ ВСЕ НА СВЕРХУРОЧКУ
+         <span>большая красная кнопка · применять с наслаждением</span></button>
+     </div>
+     <div class="g-two">
+       <div class="g-card"><div class="g-kick">Вердикт системы</div>
+         <div class="g-verd">${verdict()}</div>
+         <div class="g-dim" style="margin-top:10px">Цель: 1000 🪙 или дожить до дня 20. И не довести до бунта.</div></div>
+       <div class="g-card"><div class="g-kick">Забегов сыграно</div>
+         <div class="g-big" style="font-size:38px">${getRuns()}</div>
+         <button class="g-btn-ghost" style="margin-top:10px" onclick="GAME.reset()">↺ новая игра</button></div>
+     </div>
+     <div class="g-log"><div class="g-kick" style="margin-bottom:10px">Барский журнал</div>
+       <div class="g-lines">${S.log.map(l=>`<div><span>${l.t}</span>${esc(l.msg)}</div>`).join('')}</div></div>
+   </div>
+ </div>
+ ${S.ev?`<div class="g-modal"><div class="g-dial">
+   <div class="g-kick">Событие · день ${S.day}</div>
+   <div class="g-mt">${esc(S.ev.t)}</div><div class="g-mm">${esc(S.ev.m)}</div>
+   <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+     ${S.ev.c.map((c,i)=>`<button class="g-choice" onclick="GAME.choose(${i})">${esc(c.l)}</button>`).join('')}</div>
+ </div></div>`:''}
+ ${S.over?`<div class="g-modal"><div class="g-dial" style="text-align:center;border-color:${S.over.w?'#e6a15a':'var(--red)'}">
+   <div style="font-size:50px">${S.over.ic}</div>
+   <div class="g-mt" style="color:${S.over.w?'#e6a15a':'var(--red)'}">${S.over.t}</div>
+   <div class="g-mm">${esc(S.over.m)}</div>
+   <div class="g-dim" style="margin-top:14px">Счёт: <b style="color:var(--ink);font-size:20px">${score()}</b> · дней: ${S.day} · рекорд: ${getBest()}</div>
+   <button class="g-choice" style="margin-top:16px;text-align:center" onclick="GAME.reset()">↺ Ещё разок</button>
+ </div></div>`:''}
+ <div id="gAchToast" class="g-toast"></div>`;
+ drawFace();
+}
+
+/* ─────────── ПУБЛИЧНОЕ ─────────── */
+return {
+ html(){ return '<div id="gRoot"></div>'; },
+ start(){ if(!S) S=fresh(); this.stop(); iv=setInterval(tick,1400); fiv=setInterval(drawFace,170); draw(); },
+ stop(){ if(iv){clearInterval(iv);iv=null;} if(fiv){clearInterval(fiv);fiv=null;} },
+ cmd, overtime, choose, reset,
+ mode:setMode,
+ pause(){ if(S&&!S.over&&!S.ev){ S.run=!S.run; draw(); } },
+};
 })();
 
 init();
