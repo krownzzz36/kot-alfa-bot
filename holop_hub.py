@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.24-1"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.24-2"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -176,7 +176,7 @@ class Auth:
             raise RuntimeError(
                 "Telegram не ответил за 60 секунд. Проверь интернет/VPN и попробуй ещё раз.")
 
-    def send_code(self, phone):
+    def send_code(self, phone, force_sms=False):
         from telethon import TelegramClient
         from telethon.sessions import StringSession
         cfg = load_cfg()
@@ -185,19 +185,23 @@ class Auth:
         phone = phone.strip().replace(" ", "")
 
         async def _go():
-            if self.client:
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
-            self.client = TelegramClient(StringSession(), api_id, api_hash)
-            await self.client.connect()
-            sent = await self.client.send_code_request(phone)
+            # при повторной отправке (SMS) переиспользуем тот же клиент — иначе
+            # Telegram не даст сменить способ доставки
+            if not (force_sms and self.client and self.phone == phone):
+                if self.client:
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                self.client = TelegramClient(StringSession(), api_id, api_hash)
+                await self.client.connect()
+            sent = await self.client.send_code_request(phone, force_sms=force_sms)
             self.phone = phone
             self.phone_code_hash = sent.phone_code_hash
+            return _where_code_went(sent)
 
         with self.lock:
-            self._run(_go())
+            return self._run(_go())
 
     def sign_in(self, code=None, password=None):
         """Возвращает 'ready' (вошли, сессия сохранена) или 'password' (нужен 2FA)."""
@@ -225,6 +229,22 @@ class Auth:
 
 
 AUTH = Auth()
+
+
+def _where_code_went(sent):
+    """Понятным языком: КУДА Telegram отправил код. Главная причина жалоб
+    «код не приходит» — его шлют СООБЩЕНИЕМ В САМ TELEGRAM, а люди ждут SMS."""
+    name = type(getattr(sent, "type", None)).__name__
+    if "App" in name:
+        return ("app", "Код отправлен СООБЩЕНИЕМ В TELEGRAM — открой Telegram на телефоне "
+                       "и найди чат «Telegram» (обычно самый верхний). SMS не будет!")
+    if "Sms" in name:
+        return ("sms", "Код отправлен по SMS на твой номер.")
+    if "Call" in name:
+        return ("call", "Telegram позвонит и продиктует код голосом.")
+    if "Email" in name:
+        return ("email", "Код отправлен на привязанную почту.")
+    return ("app", "Код отправлен. Проверь чат «Telegram» в приложении и SMS.")
 
 
 def _log_auth_error(e):
@@ -818,8 +838,8 @@ class H(BaseHTTPRequestHandler):
                     phone = (body.get("phone") or "").strip()
                     if not phone:
                         return self._json({"ok": False, "err": "Введи номер телефона."})
-                    AUTH.send_code(phone)
-                    return self._json({"ok": True, "need": "code"})
+                    kind, where = AUTH.send_code(phone, force_sms=bool(body.get("sms")))
+                    return self._json({"ok": True, "kind": kind, "where": where})
                 if parts[2] == "sign_in":
                     r = AUTH.sign_in(code=(body.get("code") or "").strip())
                     return self._json({"ok": True, "need": r})
@@ -1185,6 +1205,7 @@ LOGIN_PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    background:linear-gradient(180deg,color-mix(in srgb,var(--green) 90%,#fff),var(--green));
    transition:transform .09s ease,filter .15s}
  button:hover{filter:brightness(1.07)} button:active{transform:scale(.985)} button:disabled{opacity:.5;cursor:default}
+ button.ghost{background:transparent;border:.5px solid var(--line);color:var(--mut);font-weight:500;font-size:13.5px;margin-top:10px}
  .link{margin-top:14px;text-align:center;color:var(--mut);font-size:13px;cursor:pointer}
  .link:hover{color:var(--ink)}
  .note{color:var(--mut);font-size:12.5px;min-height:18px;margin-top:12px}
@@ -1209,6 +1230,7 @@ LOGIN_PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
     <label>Код из Telegram (придёт в приложение)</label>
     <input id="code" type="text" inputmode="numeric" placeholder="12345" autocomplete="one-time-code">
     <button id="btn-code" onclick="signIn()">Войти</button>
+    <button id="btn-sms" class="ghost" onclick="sendCode(true)">Код не пришёл — прислать по SMS</button>
     <div class="link" onclick="back()">← другой номер</div>
   </div>
 
@@ -1235,14 +1257,18 @@ async function api(path,data){
     return {ok:false, err:'Панель не ответила. Проверь, что окно пульта не закрыто, и попробуй ещё раз.'};
   }
 }
-async function sendCode(){
+async function sendCode(sms){
   const phone=$('phone').value.trim();
   if(!phone){note('Введи номер.','err');return;}
-  $('btn-phone').disabled=true; note('Отправляю код…');
-  const d=await api('send_code',{phone});
-  $('btn-phone').disabled=false;
+  const b = sms ? $('btn-sms') : $('btn-phone');
+  if(b) b.disabled=true;
+  note(sms?'Запрашиваю SMS…':'Отправляю код…');
+  const d=await api('send_code',{phone, sms:!!sms});
+  if(b) b.disabled=false;
   if(!d.ok){note(d.err||'Ошибка','err');return;}
-  note(''); show('step-code'); $('code').focus();
+  // ГЛАВНОЕ: явно пишем, КУДА ушёл код — люди ждут SMS, а он в самом Telegram
+  note(d.where||'Код отправлен.', d.kind==='sms'?'ok':'');
+  show('step-code'); $('code').focus();
 }
 async function signIn(){
   const code=$('code').value.trim();
