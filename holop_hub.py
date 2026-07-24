@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-13"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-14"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -577,7 +577,7 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
                            "auto_oboz": False, "war_mode": False, "human_mode": False,
-                           "notify_dm": False}
+                           "notify_dm": False, "free_hunt": False}
 
 
 def load_smash_settings():
@@ -613,6 +613,7 @@ def save_smash_settings(body):
         out["war_mode"] = bool(body.get("war_mode", cur["war_mode"]))
         out["human_mode"] = bool(body.get("human_mode", cur["human_mode"]))
         out["notify_dm"] = bool(body.get("notify_dm", cur["notify_dm"]))
+        out["free_hunt"] = bool(body.get("free_hunt", cur["free_hunt"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -1300,7 +1301,10 @@ function render(mid){
             ${swHTML('set_pierce','🧱 Пробивать ров/частокол у целей (иначе — пропускать)')}
             ${swHTML('set_hit_shields','🏹 Сносить донат-щит требушетом и фармить (выкл — беречь требушеты)')}
             ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
+            ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
+            ${swHTML('set_human','🧑 Человеческий режим — иногда «отходить» на 8–30 мин (дополнение, не замена ночному фарму)')}
+            ${swHTML('set_notify','🔔 Слать мне в Избранное о важном (бочка/лечение) — по желанию, деф выкл')}
           </div>
           <button class="b-blue" style="margin-top:14px" onclick="saveSettings()">💾 Сохранить настройки</button>
           <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
@@ -1449,6 +1453,7 @@ async function loadSettings(){
     const hs=$('#set_hit_shields'); if(hs) hs.checked=!!d.hit_shields;
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
+    const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
     const nt=$('#set_notify'); if(nt) nt.checked=!!d.notify_dm;
@@ -1466,6 +1471,7 @@ async function saveSettings(){
     hit_shields:!!($('#set_hit_shields')||{}).checked,
     bank_gold:!!($('#set_bank_gold')||{}).checked,
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
+    free_hunt:!!($('#set_free_hunt')||{}).checked,
     war_mode:!!($('#set_war')||{}).checked,
     human_mode:!!($('#set_human')||{}).checked,
     notify_dm:!!($('#set_notify')||{}).checked};
@@ -1502,7 +1508,8 @@ const GUIDE_SECTIONS=[
    <p><b>🛡️ Авто-оборона</b> — держит ров и частокол активными + запас. Ров/частокол — расходники (блок 1 и 3 набега), бот перепроверяет их чаще и сразу после атаки на тебя.</p>
    <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
    <p><b>🐴 Авто-обоз</b> — покупает обоз «+50% серебра с набегов на 50 мин» за золото (собирает с холопов / из казны). Срок хранит в файле, лишний раз в магазин не лезет.</p>
-   <p><b>🔔 Слать мне в Избранное</b> — важные события (бочка взорвалась и т.п.) прилетают тебе личным сообщением в «Избранное» Telegram. Узнаёшь сразу, даже не открывая пульт. По умолчанию включено.</p>
+   <p><b>🎯 Свободная охота</b> — не по списку ников, а прямо с арены: бот листает соперников твоего уровня, отбирает атакуемых (клан, купол, новичков «ниже ур.» и тех, кто в КД — пропускает) и бьёт <b>слабейших по защите первыми</b> — их легче добить и реже блочат. Донат-цели и скамейку не трогает, ров/частокол — по галочке «Пробивать». Удобно, когда своего списка нет или хочется грести лут с самых мягких. Работает вместе с лечением, авто-казной, войной и человеческим режимом. Выключишь — вернётся к твоему списку целей.</p>
+   <p><b>🔔 Слать мне в Избранное</b> — важные события (бочка/лечение) прилетают тебе личным сообщением в «Избранное» Telegram. Узнаёшь сразу, даже не открывая пульт. <b>По умолчанию выключено</b> — включи галочкой, если хочешь уведомления.</p>
    <p><b>🧑 Человеческий режим</b> — бот иногда «отходит» на 8–30 минут, чтобы активность не была машинно-ровной сутками (менее палевно). Это ДОПОЛНЕНИЕ, не замена — фармить продолжает, в том числе ночью. По умолчанию выключен.</p>
    <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],
  ['🎭','Роли холопов',`

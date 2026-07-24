@@ -124,6 +124,12 @@ WAR_NAP_FLOOR = 2.0       # минимум сна (обычный — 5с)
 WAR_WEAK_CAP = 90.0       # максимум ожидания регена цели, сек — дальше перепроверим вживую
 WAR_SHIELD_PAD = 3        # через сколько сек после конца щита пробовать (обычный — 30)
 
+# 🎯 СВОБОДНАЯ ОХОТА — бить слабейших по защите с арены, без фикс-списка.
+# Каждый проход: сортируем арену «Защита ▲» (слабые первыми), листаем несколько
+# страниц и собираем ники доступных к атаке целей — а бьём их обычным do_target()
+# (то же лечение/статистика/КД/ров-частокол). Ограничения — чтобы проход был конечным.
+HUNT_MAX_PAGES = 5        # сколько страниц арены пролистать за проход (соберём пул атакуемых)
+
 
 def heal_recheck_secs(s):
     """Интервал перечитывания HP при лечении с небольшим рандомом (не долбить ровно по таймеру)."""
@@ -451,6 +457,7 @@ class Smasher:
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
         self._pierce_defenses = True  # пробивать ров/частокол (True) или пропускать (False)
+        self._free_hunt = False       # 🎯 свободная охота: бить слабых по защите с арены, без списка
         self._hit_shields = True      # сносить донат-щит требушетом и фармить дальше (True) или беречь требушеты и скипать (False)
         self._last_tl_warn = 0.0      # троттл лога про нераспознанные анимации @holop
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
@@ -541,6 +548,12 @@ class Smasher:
         self._bank_gold = bool(data.get("bank_gold", getattr(self, "_bank_gold", False)))  # класть ли золото в казну (деф нет — только серебро)
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
+        was_hunt = getattr(self, "_free_hunt", False)
+        self._free_hunt = bool(data.get("free_hunt", getattr(self, "_free_hunt", False)))
+        if self._free_hunt and not was_hunt:
+            log("🎯 Свободная охота ВКЛ — бью слабейших по защите с арены, фикс-список не нужен.")
+        elif not self._free_hunt and was_hunt:
+            log("📋 Свободная охота ВЫКЛ — вернулся к списку целей.")
         self._hit_shields = bool(data.get("hit_shields", getattr(self, "_hit_shields", True)))
         self._auto_oboz = bool(data.get("auto_oboz", getattr(self, "_auto_oboz", False)))
         # ⚔️ ВОЙНА: агрессивные тайминги поверх обычных (на лету вкл/выкл)
@@ -832,6 +845,97 @@ class Smasher:
             if not m.out and "ТЕРРИТОРИЯ" in t and ("Здоровье" in t or "Жизни" in t):
                 return parse_my_low_hp(t)
         return None
+
+    # ---------- 🎯 СВОБОДНАЯ ОХОТА (арена по умолчанию, сорт по защите) ----------
+    async def _fresh_arena(self):
+        """Самое свежее сообщение-арена (с кнопками). @holop на сортировку/пагинацию
+        присылает НОВОЕ сообщение (не правит старое) — по старому id кнопки уже
+        «протухли» (MessageIdInvalid). Поэтому всегда берём новейшее."""
+        for m in sorted(await self.recent(8), key=lambda x: x.id, reverse=True):
+            if m.out:
+                continue
+            t = m.message or ""
+            if ("АРЕНА" in t or "🎯 Цели" in t) and m.buttons:
+                return m
+        return None
+
+    async def _click_data(self, msg, want, *, label="", text_eq=None, wait_for=None, changed_from=None):
+        """Нажать кнопку арены по её callback-данным (подстрока `want`) и вернуть
+        НОВЕЙШИЙ экран арены (сорт/страница приходят новым сообщением).
+        text_eq — доп. фильтр по точному тексту кнопки (для стрелки «›»).
+        wait_for — ждём эту подстроку в новом тексте; changed_from — ждём, пока
+        текст СТАНЕТ ОТЛИЧНЫМ от переданного (для пагинации)."""
+        pos = None
+        for r, row in enumerate(msg.buttons or []):
+            for c, b in enumerate(row):
+                d = getattr(b, "data", None)
+                if not d or want not in d:
+                    continue
+                if text_eq is not None and (b.text or "").strip() != text_eq:
+                    continue
+                pos = (r, c)
+                break
+            if pos:
+                break
+        if pos is None:
+            return None
+        await self.click(msg, pos[0], pos[1], label=label)
+        if self.dry:
+            return msg
+        for _ in range(14):
+            await rsleep(0.4)
+            m = await self._fresh_arena()
+            if not m:
+                continue
+            t = m.message or ""
+            if wait_for is not None and wait_for not in t:
+                continue
+            if changed_from is not None and t == changed_from:
+                continue
+            return m
+        return await self._fresh_arena()
+
+    async def pick_hunt_names(self, arena):
+        """Выбрать ники для свободной охоты: слабейшие по защите АТАКУЕМЫЕ соперники.
+        Тонкость (проверено вживую): игровые сорты «по защите ▲»/«уровень ▲» упираются
+        в защищённых новичков «ниже 6 ур.» (их сотни — атаковать нельзя). Поэтому сорт
+        «Уровень ▼» (соперники твоего уровня = атакуемые), собираем их со страниц и
+        ранжируем по защите ЛОКАЛЬНО — слабейшие первыми. Клан/купол/КД, донат-щиты,
+        скамейку и (если «пробивать» выкл) ров/частокол — пропускаем."""
+        skip = self.load_donate() | self.load_benched()
+        msg = await self._click_data(arena, b"pvp_sort_level_high",
+                                     label="сорт: уровень ▼", wait_for="Уровень ▼") or arena
+        pool, seen = [], set()                    # (защита, ник) атакуемых
+        for page in range(HUNT_MAX_PAGES):
+            blocks = parse_arena_targets(msg.message or "")
+            positions = target_positions(self.flat_buttons(msg))
+            datas = self.target_button_datas(msg)
+            for i, b in enumerate(blocks):
+                if i >= len(positions):
+                    break
+                nm = b.get("name") or ""
+                key = norm(nm)
+                if not nm or key in seen:
+                    continue
+                if not button_attackable(positions[i][2]):
+                    continue                      # клан / купол / «ниже N ур.» / уже в КД
+                if key in skip:
+                    continue                      # донат-щит / скамейка
+                if not self._pierce_defenses and i < len(datas) and datas[i] and b"_def_" in datas[i]:
+                    continue                      # ров/частокол, «пробивать» выкл
+                hp = b.get("hp")
+                if hp is not None and hp <= self.s["tgt_min_hp"]:
+                    continue                      # слишком слаба — не набьём лут
+                seen.add(key)
+                defv = b.get("defense")
+                pool.append((defv if defv is not None else 10 ** 9, nm))
+            nxt = await self._click_data(msg, b"pvp_page_", label="арена: стр. →",
+                                         text_eq="›", changed_from=msg.message)
+            if nxt is None:
+                break                             # стрелки «›» нет — страницы кончились
+            msg = nxt
+        pool.sort(key=lambda x: x[0])             # слабейшие по защите — первыми (легче добить, реже блок)
+        return [nm for _, nm in pool[:HUNT_MAX_HITS]]
 
     async def open_territory(self):
         """Открыть «Территория» и вернуть сообщение (со статами и кнопкой «Собрать»). None если не смог."""
@@ -2072,6 +2176,10 @@ class Smasher:
                     log(f"  ⚠️ авто-казна (лечение) сбой: {type(e).__name__}: {e}")
             return None
 
+        # 🎯 СВОБОДНАЯ ОХОТА: не фикс-список, а слабейшие по защите прямо с арены.
+        if self._free_hunt:
+            return await self.free_hunt_cycle(arena, my_hp)
+
         self.targets = self.load_targets()   # подхватываем правки списка из панели на лету
         benched = self.load_benched()
         donated = self.load_donate()          # цели с донат-Куполом/Стеной — не бьём (требушеты)
@@ -2102,6 +2210,29 @@ class Smasher:
             if isinstance(my_after, int) and my_after <= s["my_min_hp"]:
                 log(f"🩸 После удара мои HP {my_after} ≤ {s['my_min_hp']} — прерываю проход на лечение "
                     f"(продолжу список после «{t}»)")
+                return None
+            await self.inter_hit()
+        return None
+
+    async def free_hunt_cycle(self, arena, my_hp):
+        """Один проход свободной охоты: набрать слабейших по защите с арены и отдубасить
+        их обычным do_target() (лечение/статистика/КД/ров-частокол — всё как в списке)."""
+        s = self.s
+        names = await self.pick_hunt_names(arena)
+        if not names:
+            nap = WAR_NAP_CAP if self._war_mode else 90.0
+            log(f"🎯 Охота: доступных слабых по защите не видно (все в КД/клан/купол) — "
+                f"пробую снова через {fmt_secs(nap)}")
+            return await self.sleep_gated(nap)
+        log(f"🎯 Охота: набрал {len(names)} слабых по защите, мои HP {my_hp} — "
+            f"{', '.join(names)}")
+        for t in names:
+            if self.control_state() != "run":
+                return None   # пульт переключили — уходим на gate() в начале цикла
+            my_after = await self.do_target(t)
+            self._last_hit_name = t
+            if isinstance(my_after, int) and my_after <= s["my_min_hp"]:
+                log(f"🩸 После удара мои HP {my_after} ≤ {s['my_min_hp']} — прерываю охоту на лечение")
                 return None
             await self.inter_hit()
         return None
