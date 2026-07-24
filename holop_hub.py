@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-5"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-6"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -342,6 +342,10 @@ MODULES = [
     {
         "id": "game", "title": "Барская игра", "emoji": "🎮", "kind": "game",
         "desc": "Тамагочи-сатира: год в поместье — усадьба, сюжетные истории, 16 финалов. Ачивки и слава рода копятся между забегами.",
+    },
+    {
+        "id": "guide", "title": "Гайд", "emoji": "📖", "kind": "guide",
+        "desc": "Как всё работает: каждая вкладка, каждая кнопка и галочка — по порядку.",
     },
     {
         "id": "scout", "title": "Разведка (КД/щиты)", "emoji": "📊", "kind": "oneshot",
@@ -1140,6 +1144,15 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    .g-hud .g-h{min-width:88px;padding:9px 11px}.g-big{font-size:21px}}
  @media (prefers-reduced-motion:reduce){.g-fl{animation-duration:.01ms}.g-bar i{transition:none}
    .g-cmds button:hover:not(:disabled),.g-bld:hover:not(:disabled),.g-choice:hover,.g-perk.can:hover{transform:none}}
+ .guide{max-width:820px}
+ .guide-lead{color:var(--mut);font-size:13.5px;margin-bottom:16px;line-height:1.5}
+ .guide-sec{margin-bottom:10px}
+ .guide-body{font-size:14px;line-height:1.62;color:var(--ink)}
+ .guide-body p{margin:0 0 10px} .guide-body p:last-child{margin-bottom:0}
+ .guide-body ul{margin:0 0 10px;padding-left:20px} .guide-body li{margin:4px 0}
+ .guide-body b{color:var(--ink);font-weight:650}
+ .guide-body code{font:12.5px var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+ .guide-body i{color:var(--mut)}
 </style></head><body>
 <div class="app">
 <aside class="rail">
@@ -1196,13 +1209,14 @@ function render(mid){
     pollStatus(); timer=setInterval(pollStatus,2000); return;
   }
   if(m.kind==='game'){ main.innerHTML=head+GAME.html(); GAME.start(); return; }
+  if(m.kind==='guide'){ main.innerHTML=head+GUIDE_HTML; return; }
   let ctl='';
   if(m.kind==='loop'){
     ctl=`<details class="acc" open>
         <summary><span class="acc-ic">🎮</span><span class="acc-t">Управление</span><span class="chev"></span></summary>
         <div class="acc-body">
-          <div class="btns"><button class="b-green" onclick="post('${mid}','start')">▶ Запустить</button>
-            <button class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
+          <div class="btns"><button id="btnStart" class="b-green" onclick="post('${mid}','start')">▶ Запустить</button>
+            <button id="btnStop" class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
           <button id="nightBtn" class="b-night" style="margin-top:9px" onclick="toggleNight()">🌙 Ночной режим</button>
           <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
         </div>
@@ -1250,7 +1264,8 @@ function render(mid){
     const sels=(m.selects||[]).map(selectHTML).join('');
     const acts=(m.actions||[]).map(a=>{
       const cls=a.id==='run'?'b-green':a.id==='clear'?'b-red':'b-grey';
-      return `<button class="${cls}" onclick="runOne('${mid}','${a.id}')">${a.label}</button>`;
+      const idAttr=a.id==='run'?' id="btnStart"':'';   // главная кнопка «запуска» — реактивная
+      return `<button${idAttr} class="${cls}" onclick="runOne('${mid}','${a.id}')">${a.label}</button>`;
     }).join('');
     let resultBox='';
     if(m.result_file){
@@ -1270,7 +1285,7 @@ function render(mid){
         <summary><span class="acc-ic">🎛️</span><span class="acc-t">Параметры</span><span class="chev"></span></summary>
         <div class="acc-body">${fields}${sels}
           <div class="btns" style="margin-top:14px">${acts}
-            <button class="b-red" onclick="post('${mid}','stop')">⏹ Стоп</button></div>
+            <button id="btnStop" class="b-red" onclick="post('${mid}','stop')">⏹ Стоп</button></div>
           <div class="note" id="note"></div>
         </div>
       </details>${resultBox}`;
@@ -1287,6 +1302,10 @@ let nightOn=false;
 async function pollMod(){
   try{ const r=await fetch('/api/'+active+'/status'); const d=await r.json();
     const mp=$('#mpill'); if(mp) mp.innerHTML=pill(d.state); petState=d.state||'run';
+    // кнопки реагируют на состояние: активная — цветом, неактивная — серым
+    const on=(d.state==='run'||d.state==='pause');
+    const bS=$('#btnStart'); if(bS) bS.className=on?'b-grey':'b-green';
+    const bT=$('#btnStop');  if(bT) bT.className=on?'b-red':'b-grey';
     if(d.log){ var _l=(d.log.trim().split('\n').pop()||''); if(_l!==petLastLine){ petLastLine=_l; var _e=classifyLog(_l); if(_e) petEvent=_e; } }
     const nb=$('#nightBtn'); if(nb){ nightOn=!!d.night;
       nb.className='b-night'+(nightOn?' on':'');
@@ -1406,6 +1425,68 @@ async function saveSettings(){
     loadSettings();
   }catch(e){}
 }
+/* ─────────── 📖 ГАЙД (при изменениях в пульте — обновлять и его!) ─────────── */
+const GUIDE_SECTIONS=[
+ ['🚀','С чего начать',`
+   <p><b>Пульт</b> — это панель управления твоим ботом для игры @holop. Всё работает <b>локально на твоём компьютере</b>, вход в Telegram никуда не уходит.</p>
+   <p><b>Запуск:</b> двойной клик по <code>START.bat</code> (Windows) или <code>START-mac.command</code> (Mac). Откроется вкладка в браузере — это и есть пульт.</p>
+   <p><b>Обновления прилетают сами.</b> Чтобы обнова применилась, <b>полностью закрой окно пульта и запусти заново</b> — запуск сам подтянет свежую версию с сервера. Версия видна внизу слева; свежая — значит всё на месте.</p>
+   <p><b>Вкладки слева</b> — это разделы. Кот 🐾 внизу живой: реагирует на то, что делает бот. Тыкни его; двойной клик — пробежится.</p>`],
+ ['🟢','Кнопки запуска',`
+   <p>У каждого бота две кнопки: <b>Запустить</b> и <b>Остановить</b>. Они подсказывают состояние цветом:</p>
+   <ul><li><b>Бот стоит:</b> «Запустить» горит <span style="color:var(--green)">зелёным</span> (жми её), «Остановить» серая.</li>
+   <li><b>Бот работает:</b> «Остановить» горит <span style="color:var(--red)">красным</span>, «Запустить» серая.</li></ul>
+   <p>Пилюля справа вверху («🟢 Работает / ⚪ Остановлен») дублирует статус.</p>
+   <p><b>🛑 Стоп-кран</b> (внизу слева) — гасит ВСЕ боты разом. <b>👤 Сменить аккаунт</b> — выйти и войти заново (если Telegram отозвал сессию); списки и настройки при этом остаются.</p>`],
+ ['⚔️','Набеги — авто-бой',`
+   <p>Бот сам бьёт по твоему списку целей и защищает замок от бочки. Всё правится на лету — бот подхватит в ближайший цикл.</p>
+   <p><b>🎯 Цели</b> — список ников (по одному в строке). Кого бот бьёт. Пусто — бот ждёт, никого не трогает.</p>
+   <p><b>🛡️ Щитники — не бить</b> — ники, у кого донат-щит (Купол/Стена). Бот их пропустит и не потратит требушет. Бот и сам сюда дописывает, кого распознал в бою.</p>
+   <p><b>🌙 Ночной режим</b> — держит Mac бодрым и сам перезапускает бота, если тот упал/завис. Для фарма на ночь.</p>`],
+ ['🎛️','Набеги — Настройки боя',`
+   <p><b>Воевать, пока HP выше</b> — если моё HP упало ниже, бот уходит лечиться. <b>Лечиться до HP</b> — до какого значения восстанавливаться.</p>
+   <p><b>Реген: секунд на 1 HP</b> — скорость восстановления. Можно вписать вручную. Или включить <b>Авто-реген</b> — тогда бот сам считает по бонусам с Территории И <b>уточняет по факту</b> (замеряет реальное восстановление во время лечения). При левелапе пересчитает сам.</p>
+   <p><b>🏦 Авто-казна</b> — собирает доход и кладёт в депозит (реинвест). <b>🪙 Класть в казну и золото</b> — по умолчанию в казну идёт только серебро, золото остаётся свободным на оборону; включи, если хочешь копить и золото.</p>
+   <p><b>🛡️ Авто-оборона</b> — держит ров и частокол активными + запас. Ров/частокол — расходники (блок 1 и 3 набега), бот перепроверяет их чаще и сразу после атаки на тебя.</p>
+   <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
+   <p><b>🐴 Авто-обоз</b> — покупает обоз «+50% серебра с набегов на 50 мин» за золото (собирает с холопов / из казны). Срок хранит в файле, лишний раз в магазин не лезет.</p>
+   <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],
+ ['🎭','Роли холопов',`
+   <p>Перегоняет холопа в нужную профессию: выгоняет → тут же захватывает обратно → читает профессию → повторяет, пока не выпадет нужная. Бот успевает в 30-сек окно эксклюзива, поэтому холопа не уводят (руками — уводят).</p>
+   <p><b>Ники</b> — по одному в строке. <b>Профессия</b> — целевая (по умолчанию Воин). <b>Авто-разжаб</b> — если холоп под охраной, бот снимет её зельем жаб ИЗ ЗАПАСА (звёзды не тратит) и заберёт. Без этого на защищённом холопе бот просто остановится.</p>
+   <p>Кнопки: <b>Перегнать</b> (боевой), <b>Проверить</b> (только показать профессию), <b>Холостой</b> (dry-run, ничего не жмёт).</p>
+   <p>⚠️ Зелье жаб бери из запаса заранее — на старт каждого защищённого холопа уходит примерно одно.</p>`],
+ ['🔎','Найти цели',`
+   <p>Сканирует богатых бьющихся соперников (сортировка по серебру) и выдаёт список ников. Справа в поле «Найденные ники» — кнопки <b>Копировать</b> и <b>В Набеги</b> (добавит в список набегов без дублей).</p>
+   <p><b>Сколько целей / страниц</b> — глубина поиска. <b>Макс. защита</b> — 0 = любая; напр. 500 для боя за 1 HP. <b>Пропускать цели с ров/частокол/защитой</b> — Да/Нет.</p>`],
+ ['📊','Разведка (КД/щиты)',`
+   <p>Вставь ников — покажет, когда у каждого спадёт щит/КД и восстановится HP (время по МСК). Можно поставить напоминалки «за N минут: готовься к атаке на X».</p>`],
+ ['🕳️','Пещеры и ⏰ Будильники',`
+   <p><b>Пещеры</b> — автопроход трёх пещер по очереди до стоп-уровня. Настройки: мин. шанс победы, мин. HP, стоп-уровень.</p>
+   <p><b>Будильники</b> — отложенные мигалки в чат к моменту спадения охраны холопов (за N минут до).</p>`],
+ ['🎮','Барская игра',`
+   <p>Мини-игра для отдыха: содержи холопа-кота, богатей, не доведи до бунта. Команды, события с выбором, сюжетные цепочки, куча финалов. <b>Ачивки копятся между забегами</b> (Салтычиха, Мироед, Вольная…). Рекорд и число забегов сохраняются. Чистая забава, на бота не влияет.</p>`],
+ ['🔒','Про безопасность',`
+   <p>Твой вход хранится только на этом компьютере (файл <code>config.json</code>) и никуда не отправляется. Это игровой самобот — против правил Telegram, используешь на свой риск.</p>
+   <p>Бот работает только у участников закрытой группы тестеров — защита от того, чтобы архив не расползся по чужим людям.</p>
+   <p><b>Если код входа не приходит:</b> Telegram шлёт его не по SMS, а сообщением в сам Telegram — ищи чат «Telegram» (служебный, вверху списка). Или жми «Код не пришёл — прислать по SMS».</p>`],
+ ['🛠️','Если что-то не так',`
+   <ul>
+   <li><b>Нажимаю Запустить — ничего:</b> закрой окно пульта полностью и запусти заново.</li>
+   <li><b>Новых функций нет после обновы:</b> та же причина — панель держала старую версию в памяти. Полный перезапуск лечит.</li>
+   <li><b>Журнал завалило «Server closed the connection»:</b> рвётся связь (интернет/VPN). Бот сам переподключается; зафиксируй VPN на одной стране.</li>
+   <li><b>«Ключ отозван» / вылет сессии:</b> VPN сменил страну на ходу. Зафиксируй одну страну, жми «Сменить аккаунт».</li>
+   <li>Не помогло — пришли в чат файлы <code>startup_log.txt</code>, <code>hub_error.log</code>, <code>auth_log.txt</code> из папки пульта.</li></ul>
+   <p><i>Журнал теперь идёт новыми строками сверху.</i></p>`],
+];
+const GUIDE_HTML=`<div class="guide">
+  <div class="guide-lead">Пульт живёт и обновляется — этот гайд обновляется вместе с ним. Разверни любой раздел.</div>
+  ${GUIDE_SECTIONS.map((s,i)=>`<details class="acc guide-sec"${i===0?' open':''}>
+    <summary><span class="acc-ic">${s[0]}</span><span class="acc-t">${s[1]}</span><span class="chev"></span></summary>
+    <div class="acc-body guide-body">${s[2]}</div>
+  </details>`).join('')}
+</div>`;
+
 async function init(){
   CFG=await (await fetch('/api/config')).json();
   $('#tabs').innerHTML=CFG.map(m=>`<span class="tab" data-id="${m.id}" onclick="render('${m.id}')">${m.emoji} ${m.title}</span>`).join('');
