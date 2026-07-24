@@ -77,6 +77,9 @@ echo   --------------------------------------------
 echo(
 echo START HUB >> "%LOG%"
 
+rem Kill an older panel still holding the port (it serves STALE code)
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*holop_hub.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+
 %PYCMD% holop_hub.py 2>>"%LOG%"
 
 echo(
