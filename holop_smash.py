@@ -421,7 +421,9 @@ class Smasher:
         self.lo = float(cfg.get("min_delay", 0.8))
         self.hi = float(cfg.get("max_delay", 1.8))
         # состояние
-        self.next_ok = {}    # norm-имя? нет: имя -> epoch, когда цель снова доступна
+        self._cd_cache_path = os.path.join(HERE, "cd_cache.json")  # КД/щиты целей — переживают перезапуск
+        self.next_ok = self._load_cd_cache()   # имя -> epoch, когда цель снова доступна (из файла)
+        self._cd_saved_at = 0.0
         self.stats = {"hits": 0, "wins": 0, "blocked": 0, "loss": 0, "loot": 0, "rep": 0.0}
         self._paused_note = False
         self._last_heartbeat = 0.0
@@ -456,6 +458,44 @@ class Smasher:
                            "spent_gold": 0, "spent_silver": 0})
 
     # ---------- список целей (файл smash_targets.txt) ----------
+    # ---------- КЭШ КД/ЩИТОВ ЦЕЛЕЙ (переживает перезапуск — анти-палево) ----------
+    def _load_cd_cache(self):
+        """Загрузить КД целей из файла. Без него после перезапуска бот считал ВСЕ цели
+        свободными и делал залповый опрос всего списка (пик палева). Грузим только
+        БУДУЩИЕ КД (истёкшие не нужны — цель и так доступна)."""
+        try:
+            with open(self._cd_cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            now = time.time()
+            out = {}
+            for name, ts in (data.get("next_ok") or {}).items():
+                try:
+                    ts = float(ts)
+                except (TypeError, ValueError):
+                    continue
+                if ts > now:                       # ещё на КД/щите — помним
+                    out[name] = min(ts, now + 30 * 86400)   # потолок 30 сут (бенч/донат не тащим)
+            if out:
+                log(f"⏳ Кэш КД: подхватил {len(out)} целей на кулдауне — не долблю их зря после старта.")
+            return out
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _save_cd_cache(self, force=False):
+        """Сохранить будущие КД в файл. Троттлинг: не чаще раза в 30с (диск не насилуем)."""
+        now = time.time()
+        if not force and now - self._cd_saved_at < 30:
+            return
+        self._cd_saved_at = now
+        try:
+            fut = {k: round(v, 1) for k, v in self.next_ok.items()
+                   if v > now and v < now + 30 * 86400}   # только реальные КД, без бенч-заглушек 10^9
+            with open(self._cd_cache_path, "w", encoding="utf-8") as f:
+                json.dump({"next_ok": fut, "updated": time.strftime("%Y-%m-%d %H:%M:%S")},
+                          f, ensure_ascii=False)
+        except OSError:
+            pass
+
     def load_targets(self):
         """Читать список целей из файла (по нику в строке, # — комментарий).
         Читаем каждый цикл — правки из панели подхватываются на лету. Пусто → дефолт."""
@@ -1868,6 +1908,7 @@ class Smasher:
             try:
                 if await self._one_cycle() == "stop":
                     break
+                self._save_cd_cache()   # КД целей → в файл (переживёт перезапуск, не долбит после старта)
             except Exception as e:
                 if _is_dead_session(e):
                     log("🛑 СЕССИЯ БОЛЬШЕ НЕ РАБОТАЕТ — Telegram отозвал ключ (сессия "
@@ -2120,6 +2161,10 @@ async def main():
     finally:
         if not args.selftest:
             bot.report()
+            try:
+                bot._save_cd_cache(force=True)   # сохранить КД целей перед выходом
+            except Exception:
+                pass
         await client.disconnect()
 
 

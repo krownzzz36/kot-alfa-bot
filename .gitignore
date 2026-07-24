@@ -25,3 +25,4 @@ __pycache__/
 .DS_Store
 auth_log.txt
 regen_calib.json
+cd_cache.json
