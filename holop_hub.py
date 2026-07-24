@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.24-5"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.24-6"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -883,88 +883,173 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>🏰 Холоп — Пульт</title>
 <style>
- :root{color-scheme:light dark;--radius:14px;--radius-sm:10px;
+ :root{color-scheme:light dark;
    --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,Helvetica,Arial,sans-serif;
-   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-   --bg:#0a0a0c;--bg2:#141416;--card:#1c1c1e;--elev:#2c2c2e;
-   --ink:#f5f5f7;--mut:#9a9aa2;--faint:#6a6a72;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.055);
-   --blue:#0a84ff;--green:#30d158;--red:#ff453a;--grey:#48484a;--purple:#bf5af2;
-   --glass:rgba(18,18,20,.72);--shadow:0 10px 34px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;}
+   --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+   --bg:#1f1830;--panel:#292140;--panel2:#2e2649;--elev:#372d55;
+   --ink:#f0eafa;--mut:#b2a6ce;--faint:#7b7098;--line:rgba(185,160,255,.10);--line2:rgba(185,160,255,.055);
+   --accent:#e6873a;--blue:#e6873a;--green:#3fbe86;--red:#f05a6b;--grey:#372d55;--purple:#9b7be6;--amber:#e6873a;
+   --shadow:0 1px 2px rgba(0,0,0,.32),0 20px 46px -16px rgba(0,0,0,.6);}
  @media (prefers-color-scheme:light){:root{
-   --bg:#f2f2f7;--bg2:#e9e9ef;--card:#fff;--elev:#fff;--ink:#1d1d1f;--mut:#6e6e73;--faint:#8e8e93;
-   --line:rgba(0,0,0,.10);--line2:rgba(0,0,0,.055);--blue:#007aff;--green:#34c759;--red:#ff3b30;--grey:#e6e6eb;
-   --glass:rgba(255,255,255,.72);--shadow:0 10px 34px rgba(0,0,0,.09),0 0 0 .5px rgba(0,0,0,.045);}}
+   --bg:#efe9f9;--panel:#ffffff;--panel2:#f7f3fd;--elev:#ffffff;--ink:#2a2340;--mut:#6f6690;--faint:#a79fc4;
+   --line:rgba(110,80,190,.10);--line2:rgba(110,80,190,.05);
+   --accent:#d9772a;--blue:#d9772a;--green:#1fa877;--red:#e24a5c;--grey:#efe9fb;--purple:#7c5cf5;--amber:#c07020;
+   --shadow:0 1px 2px rgba(60,40,110,.06),0 18px 40px -14px rgba(80,55,150,.16);}}
  *{box-sizing:border-box}
  html{-webkit-text-size-adjust:100%}
- body{margin:0;min-height:100vh;color:var(--ink);letter-spacing:-.011em;
-   font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
-   background:radial-gradient(1100px 560px at 82% -12%,color-mix(in srgb,var(--blue) 11%,transparent),transparent 62%),var(--bg)}
- header{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;padding:11px 18px;flex-wrap:wrap;
-   background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);
-   border-bottom:.5px solid var(--line)}
- h1{font-size:16px;margin:0 6px 0 0;font-weight:680;letter-spacing:-.022em;white-space:nowrap;
-   display:flex;align-items:center;gap:7px}
- #tabs{display:flex;gap:3px;padding:3px;border-radius:12px;flex-wrap:wrap;
-   background:color-mix(in srgb,var(--card) 66%,transparent);border:.5px solid var(--line2)}
- .tab{padding:6px 12px;border-radius:9px;cursor:pointer;color:var(--mut);font-weight:590;font-size:13.5px;
-   letter-spacing:-.01em;white-space:nowrap;user-select:none;transition:color .2s,background .28s,box-shadow .28s,transform .1s}
- .tab:hover{color:var(--ink)} .tab:active{transform:scale(.955)}
- .tab.on{background:var(--elev);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.28),0 0 0 .5px var(--line)}
- main{padding:18px;max-width:1440px;margin:0 auto}
- .desc{color:var(--mut);font-size:13px;margin:2px 0 16px}
- .row{display:flex;gap:16px;align-items:stretch}
- .col-log{flex:1;min-width:0;display:flex;flex-direction:column}
- .side{width:300px;display:flex;flex-direction:column;gap:9px}
- label{display:block;color:var(--mut);font-size:12px;font-weight:510;margin:9px 0 4px}
- input,select,textarea{width:100%;background:var(--card);color:var(--ink);border:.5px solid var(--line);
-   border-radius:var(--radius-sm);padding:10px 11px;font:14px var(--font);outline:none;
-   transition:border-color .18s,box-shadow .18s;-webkit-appearance:none;appearance:none}
- input:focus,select:focus,textarea:focus{border-color:var(--blue);
-   box-shadow:0 0 0 3.5px color-mix(in srgb,var(--blue) 22%,transparent)}
- input[type=checkbox]{width:18px;height:18px;min-width:18px;padding:0;border:0;border-radius:0;
-   -webkit-appearance:checkbox;appearance:auto;accent-color:var(--blue);vertical-align:-3px;cursor:pointer}
+ body{margin:0;min-height:100vh;color:var(--ink);font:14.5px/1.5 var(--font);
+   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+   background:radial-gradient(1200px 700px at 88% -10%,color-mix(in srgb,var(--accent) 13%,transparent),transparent 58%),
+     radial-gradient(1000px 640px at 2% 112%,color-mix(in srgb,var(--purple) 13%,transparent),transparent 60%),var(--bg);
+   background-attachment:fixed}
+ .app{display:flex;min-height:100vh}
+ .rail{width:236px;flex-shrink:0;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:16px;
+   padding:18px 13px;background:color-mix(in srgb,var(--panel) 82%,transparent);
+   backdrop-filter:blur(22px) saturate(180%);-webkit-backdrop-filter:blur(22px) saturate(180%);
+   border-right:1px solid var(--line);z-index:40}
+ .brand{display:flex;align-items:center;gap:12px;padding:4px 6px}
+ .brand-tile{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-size:21px;flex-shrink:0;
+   background:linear-gradient(150deg,color-mix(in srgb,var(--accent) 42%,var(--panel)),var(--panel));border:1px solid var(--line);
+   box-shadow:0 5px 16px color-mix(in srgb,var(--accent) 24%,transparent),inset 0 1px 0 rgba(255,255,255,.10)}
+ .brand-tx{display:flex;flex-direction:column;line-height:1.02;font-weight:770;font-size:17px;letter-spacing:-.01em}
+ .brand-tx small{font:600 9px var(--mono);letter-spacing:.36em;color:var(--accent);margin-top:4px}
+ #tabs{display:flex;flex-direction:column;gap:3px;flex:1;overflow-y:auto;min-height:0}
+ .tab{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:11px;cursor:pointer;color:var(--mut);
+   font-weight:560;font-size:13.5px;white-space:nowrap;user-select:none;transition:color .2s,background .2s,transform .12s,box-shadow .25s}
+ .tab:hover{color:var(--ink);background:color-mix(in srgb,var(--accent) 11%,transparent)}
+ .tab:active{transform:scale(.98)}
+ .tab.on{color:#fff;background:var(--accent);box-shadow:0 8px 18px -8px color-mix(in srgb,var(--accent) 65%,transparent)}
+ .rail-foot{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:14px}
+ .rail-foot .b-red{box-shadow:0 10px 22px -12px color-mix(in srgb,var(--red) 70%,transparent)}
+ .ver{font:11px var(--mono);color:var(--faint);text-align:center;letter-spacing:.02em;margin-top:2px}
+ .pet{display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px 0 2px;position:relative}
+ .pet-bubble{min-height:20px;font-size:15px;line-height:20px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:1px 8px;opacity:0;transition:opacity .2s;box-shadow:var(--shadow)}
+ #petCat{width:92px;height:92px;image-rendering:pixelated;image-rendering:crisp-edges;cursor:pointer}
+ .pet-say{font:10.5px var(--mono);color:var(--faint);letter-spacing:.02em}
+ #petRun{position:fixed;bottom:12px;left:0;width:104px;height:104px;image-rendering:pixelated;pointer-events:none;z-index:60;display:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.4))}
+ main{flex:1;min-width:0;max-width:1240px;margin:0 auto;padding:26px 30px 38px}
+ .head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;animation:rise .42s both}
+ .head-l{display:flex;align-items:center;gap:14px;min-width:0}
+ .mod-emoji{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:26px;flex-shrink:0;
+   background:var(--panel2);border:1px solid var(--line);box-shadow:var(--shadow)}
+ .mod-title{font-size:22px;font-weight:750;letter-spacing:-.02em}
+ .desc{color:var(--mut);font-size:13px;margin-top:2px;max-width:72ch}
+ .head-r{flex-shrink:0}
+ .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:16px;margin-bottom:20px;
+   align-items:start;animation:rise .42s .05s both}
+ .acc{background:var(--panel);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow);
+   transition:box-shadow .25s,border-color .25s}
+ .acc:hover{border-color:color-mix(in srgb,var(--accent) 38%,var(--line))}
+ .acc[open]{grid-column:1/-1}
+ .acc summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;padding:17px 19px;
+   font-weight:600;font-size:14.5px;user-select:none;transition:background .2s}
+ .acc summary:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+ .acc summary::-webkit-details-marker{display:none}
+ .acc-ic{font-size:17px;line-height:1}
+ .acc-hint{font:11px var(--mono);color:var(--faint);font-weight:400}
+ .chev{position:relative;width:18px;height:18px;flex-shrink:0;margin-left:auto}
+ .chev::before,.chev::after{content:"";position:absolute;background:var(--mut);border-radius:2px;transition:transform .28s cubic-bezier(.2,.7,.2,1),background .2s}
+ .chev::before{left:3px;right:3px;top:8px;height:2px}
+ .chev::after{top:3px;bottom:3px;left:8px;width:2px}
+ details[open] .chev::after{transform:scaleY(0)}
+ .acc:hover .chev::before,.acc:hover .chev::after{background:var(--accent)}
+ .acc-body{padding:2px 19px 19px;animation:accIn .3s cubic-bezier(.2,.7,.2,1)}
+ .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:12px 26px}
+ .grid2 .ctl-l{margin-top:0}
+ .grid2 .sw{margin-top:0}
+ label{display:block}
+ .ctl-l{color:var(--mut);font-size:12px;font-weight:520;margin:11px 0 5px}
+ input,select,textarea{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+   border-radius:12px;padding:11px 12px;font:14px var(--font);outline:none;transition:border-color .16s,box-shadow .16s;-webkit-appearance:none;appearance:none}
+ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 26%,transparent)}
+ input:disabled{opacity:.45;cursor:not-allowed}
  textarea{font:13px/1.55 var(--mono);resize:vertical}
- button{font:590 14px var(--font);letter-spacing:-.01em;border:0;border-radius:var(--radius-sm);
-   padding:10px 15px;cursor:pointer;color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.18);
-   transition:transform .09s ease,filter .15s,box-shadow .2s}
- button:hover{filter:brightness(1.08)} button:active{transform:scale(.97);filter:brightness(.93)}
- .b-green{background:linear-gradient(180deg,color-mix(in srgb,var(--green) 90%,#fff),var(--green))}
- .b-red{background:linear-gradient(180deg,color-mix(in srgb,var(--red) 90%,#fff),var(--red))}
- .b-blue{background:linear-gradient(180deg,color-mix(in srgb,var(--blue) 90%,#fff),var(--blue))}
- .b-grey{background:var(--elev);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.14),0 0 0 .5px var(--line)}
- .b-night{background:var(--elev);color:var(--ink);width:100%;box-shadow:0 1px 2px rgba(0,0,0,.14),0 0 0 .5px var(--line)}
- .b-night.on{background:linear-gradient(180deg,#7d6cf0,#6d5ae6);color:#fff}
- .pill{padding:4px 11px;border-radius:999px;font-weight:640;font-size:12px;margin-left:auto;
-   display:inline-flex;align-items:center;gap:6px}
- .pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+ .sw{display:flex;align-items:center;gap:11px;margin-top:9px;cursor:pointer;font-size:13px;color:var(--ink);line-height:1.35}
+ .sw input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+ .sw .track{flex-shrink:0;width:40px;height:23px;border-radius:99px;background:var(--elev);border:1px solid var(--line);position:relative;transition:background .22s,border-color .22s}
+ .sw .track::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--mut);transition:transform .22s cubic-bezier(.2,.9,.3,1.2),background .22s}
+ .sw input:checked + .track{background:var(--green);border-color:transparent}
+ .sw input:checked + .track::after{transform:translateX(17px);background:#fff}
+ .sw input:focus-visible + .track{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 32%,transparent)}
+ .sw .lbl{flex:1}
+ .console{animation:rise .42s .1s both;background:var(--panel);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}
+ .console-bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line2)}
+ .live{display:inline-flex;align-items:center;gap:7px;font:700 10.5px var(--mono);letter-spacing:.2em;color:var(--green);
+   padding:4px 10px;border-radius:99px;background:color-mix(in srgb,var(--green) 13%,transparent)}
+ .live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);animation:blip 1.6s ease-in-out infinite}
+ .console-name{font:12.5px var(--mono);color:var(--mut)}
+ .console-meta{margin-left:auto;font:11px var(--mono);color:var(--faint)}
+ pre.log{min-height:440px;max-height:calc(100vh - 340px);overflow:auto;background:transparent;
+   border:0;border-radius:0;padding:18px 20px;margin:0;white-space:pre-wrap;word-break:break-word;
+   font:13px/1.75 var(--mono);color:var(--ink)}
+ button{font:600 13.5px var(--font);border:0;border-radius:12px;padding:11px 15px;cursor:pointer;color:#fff;
+   box-shadow:0 1px 2px rgba(20,15,45,.08);transition:transform .09s,filter .16s,box-shadow .22s}
+ button:hover{filter:brightness(1.06)} button:active{transform:scale(.97)}
+ .b-green{background:var(--green)}
+ .b-red{background:var(--red)}
+ .b-blue{background:var(--accent);width:100%}
+ .b-grey{background:var(--elev);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+ .b-night{background:var(--elev);color:var(--ink);width:100%;box-shadow:inset 0 0 0 1px var(--line)}
+ .b-night.on{background:var(--purple);color:#fff}
+ .btns{display:flex;flex-wrap:wrap;gap:8px}
+ .btns button{flex:1;min-width:120px}
+ .pill{padding:6px 13px;border-radius:99px;font-weight:650;font-size:12.5px;display:inline-flex;align-items:center;gap:7px}
+ .pill::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 9px currentColor}
  .pill.run{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
  .pill.pause{background:color-mix(in srgb,var(--mut) 18%,transparent);color:var(--mut)}
  .pill.stopped,.pill.idle{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--red)}
- pre.log{flex:1;min-height:360px;max-height:66vh;overflow:auto;background:var(--card);border:.5px solid var(--line);
-   border-radius:var(--radius);padding:14px 16px;margin:0;white-space:pre-wrap;word-break:break-word;
-   font:12.5px/1.62 var(--mono);color:var(--ink);box-shadow:var(--shadow)}
- .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
- .note{color:var(--mut);font-size:12px;min-height:16px}
+ .note{color:var(--mut);font-size:12px;min-height:15px;margin-top:9px;line-height:1.45}
+ .summ{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 16px;margin-bottom:16px;
+   font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:var(--shadow);animation:rise .42s .05s both}
+ .board-wrap{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:var(--shadow);animation:rise .42s .1s both}
  table{width:100%;border-collapse:collapse;font-size:14px}
- td,th{text-align:left;padding:9px 10px;border-bottom:.5px solid var(--line2)}
- th{color:var(--mut);font-weight:590;font-size:12px}
- .summ{background:var(--card);border:.5px solid var(--line);border-radius:var(--radius);
-   padding:12px 14px;margin-bottom:14px;font-size:13px;box-shadow:var(--shadow)}
- ::-webkit-scrollbar{width:10px;height:10px}
- ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mut) 38%,transparent);border-radius:99px;
-   border:3px solid transparent;background-clip:padding-box}
+ td,th{text-align:left;padding:12px 15px;border-bottom:1px solid var(--line2)}
+ tr:last-child td{border-bottom:0}
+ th{color:var(--mut);font-weight:590;font-size:12px;font-family:var(--mono);letter-spacing:.03em}
+ ::-webkit-scrollbar{width:11px;height:11px}
+ ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mut) 32%,transparent);border-radius:99px;border:3px solid transparent;background-clip:padding-box}
+ ::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--mut) 50%,transparent);background-clip:padding-box}
  ::-webkit-scrollbar-track{background:transparent}
- @media (prefers-reduced-motion:reduce){*{transition:none!important}}
- @media (prefers-reduced-transparency:reduce){header{background:var(--bg2);backdrop-filter:none;-webkit-backdrop-filter:none}}
- @media (max-width:640px){.row{flex-direction:column}.side{width:auto}main{padding:12px}}
+ @keyframes blip{0%,100%{opacity:1}50%{opacity:.32}}
+ @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+ @keyframes accIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+ @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+ @media (max-width:860px){
+   .app{flex-direction:column}
+   .rail{width:auto;height:auto;flex-direction:row;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 14px;
+     border-right:0;border-bottom:1px solid var(--line)}
+   #tabs{flex-direction:row;order:3;flex-basis:100%;flex-wrap:nowrap;overflow-x:auto;gap:4px}
+   .rail-foot{flex-direction:row;align-items:center;border-top:0;padding-top:0;margin-left:auto}
+   .ver{display:none}
+   main{padding:16px 14px 26px}
+   .controls{grid-template-columns:1fr}
+   .acc[open]{grid-column:auto}
+   pre.log{max-height:56vh;min-height:320px}
+ }
+ @media (max-width:430px){.brand-tx{font-size:15px}.btns button{min-width:0}}
 </style></head><body>
-<header><h1>🏰 Холоп — Пульт <span style="color:#8a8f98;font-size:11px;font-weight:400">v__VERSION__</span></h1><div id="tabs"></div>
-<button class="b-grey" style="margin-left:auto" onclick="logout()" title="Выйти и войти заново (если Telegram отозвал сессию)">👤 Сменить аккаунт</button>
-<button class="b-red" onclick="stopAll()" title="Остановить ВСЕ боты разом">🛑 Стоп-кран</button></header>
+<div class="app">
+<aside class="rail">
+  <div class="brand"><span class="brand-tile">🏰</span><span class="brand-tx">Холоп<small>ПУЛЬТ</small></span></div>
+  <nav id="tabs"></nav>
+  <div class="pet"><div class="pet-bubble" id="petBubble"></div><canvas id="petCat" width="26" height="26"></canvas><span class="pet-say" id="petSay">🐾 Рыжик</span></div>
+  <div class="rail-foot">
+    <button class="b-grey" onclick="logout()" title="Выйти и войти заново (если Telegram отозвал сессию)">👤 Сменить аккаунт</button>
+    <button class="b-red" onclick="stopAll()" title="Остановить ВСЕ боты разом">🛑 Стоп-кран</button>
+    <div class="ver">v__VERSION__</div>
+  </div>
+</aside>
 <main id="main"></main>
+</div>
+<canvas id="petRun" width="26" height="26"></canvas>
 <script>
 const $=s=>document.querySelector(s);
-let CFG=[], active=null, timer=null;
+let CFG=[], active=null, timer=null, petState='run', petEvent=null, petLastLine='';
+function classifyLog(line){
+  var m=[[/побед|✅/i,'🎉','win','Победа!'],[/лечит|ухожу леч|❤/i,'🩹','heal','Лечится'],[/бочк|💣/i,'😾','alarm','Бочка!'],[/щит|требушет|🏹|🛡/i,'🛡️','block','Щит!'],[/казн|депозит|🏦|🪙|серебр/i,'💰','loot','Добыча'],[/атак|🎯/i,'⚔️','attack','В атаку']];
+  for(var i=0;i<m.length;i++){ if(m[i][0].test(line)) return {emoji:m[i][1],kind:m[i][2],text:m[i][3],at:performance.now()}; }
+  return null;
+}
 
 function pill(state){
   const t=state==='run'?'🟢 Работает':state==='pause'?'⏸ Пауза':
@@ -972,63 +1057,79 @@ function pill(state){
   return `<span class="pill ${state}">${t}</span>`;
 }
 function fieldHTML(f){
-  if(f.kind==='textarea') return `<label>${f.label}</label><textarea id="f_${f.id}" rows="${f.rows||5}" placeholder="${f.placeholder||''}"></textarea>`;
+  if(f.kind==='textarea') return `<label class="ctl-l">${f.label}</label><textarea id="f_${f.id}" rows="${f.rows||5}" placeholder="${f.placeholder||''}"></textarea>`;
   const type=f.kind==='number'?'number':'text';
-  return `<label>${f.label}</label><input id="f_${f.id}" type="${type}" value="${f.default!=null?f.default:''}">`;
+  return `<label class="ctl-l">${f.label}</label><input id="f_${f.id}" type="${type}" value="${f.default!=null?f.default:''}">`;
 }
 function selectHTML(s){
   const opts=s.options.map(o=>`<option ${o===s.default?'selected':''}>${o}</option>`).join('');
-  return `<label>${s.label}</label><select id="f_${s.id}">${opts}</select>`;
+  return `<label class="ctl-l">${s.label}</label><select id="f_${s.id}">${opts}</select>`;
+}
+function swHTML(id,label){
+  return `<label class="sw"><input id="${id}" type="checkbox"><span class="track"></span><span class="lbl">${label}</span></label>`;
 }
 function render(mid){
   active=mid; if(timer) clearInterval(timer);
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.id===mid));
   const m=CFG.find(x=>x.id===mid); const main=$('#main');
-  if(m.kind==='status'){ main.innerHTML=`<p class="desc">${m.desc||''}</p><div class="summ" id="summ">—</div>
-      <table><thead><tr><th>Цель</th><th>Состояние</th><th>Обновл.</th></tr></thead><tbody id="board"></tbody></table>`;
-    pollStatus(); timer=setInterval(pollStatus,2000); return; }
-  let side='';
+  const head=`<div class="head">
+      <div class="head-l"><div class="mod-emoji">${m.emoji||''}</div>
+        <div><div class="mod-title">${m.title}</div><div class="desc">${m.desc||''}</div></div></div>
+      <div class="head-r"><span id="mpill"></span></div></div>`;
+  if(m.kind==='status'){
+    main.innerHTML=head+`<div class="summ" id="summ">—</div>
+      <div class="board-wrap"><table><thead><tr><th>Цель</th><th>Состояние</th><th>Обновл.</th></tr></thead><tbody id="board"></tbody></table></div>`;
+    pollStatus(); timer=setInterval(pollStatus,2000); return;
+  }
+  let ctl='';
   if(m.kind==='loop'){
-    side=`<div class="side"><div><button class="b-green" onclick="post('${mid}','start')">▶ Запустить</button>
-      <button class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
-      <button id="nightBtn" class="b-night" onclick="toggleNight()">🌙 Ночной режим</button>
-      <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
-      <label>🎯 Цели (ник в строке)</label><textarea id="targets" rows="10" spellcheck="false"></textarea>
-      <button class="b-blue" onclick="saveTargets()">💾 Сохранить список</button>
-      <div class="note" id="note"></div>
-      <label style="margin-top:10px">🛡️ Щитники — НЕ бить (донат Купол/Стена)</label>
-      <textarea id="donate" rows="4" spellcheck="false" placeholder="ник в строке — бот их пропустит, требушеты не потратит"></textarea>
-      <button class="b-blue" onclick="saveDonate()">💾 Сохранить щитников</button>
-      <div class="note" id="dnote">Впиши тех, у кого донат-щит (Купол/Стена) — бот их не тронет. Бот и сам заносит сюда, кого распознал (1 требушет на распознавание).</div>
-      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-        <div style="font-weight:700;font-size:13px;margin-bottom:2px">⚔️ Настройки боя</div>
-        <label style="display:flex;align-items:center;gap:7px;margin:8px 0 4px;cursor:pointer;
-                      padding:8px;border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent)">
-          <input id="set_war" type="checkbox" style="width:auto"> <b>⚔️ РЕЖИМ ВОЙНЫ</b> — бить по КД без пауз,
-          держать цели прижатыми (много запросов, палевно)</label>
-        <label>Воевать, пока моё HP выше (иначе — лечиться)</label>
-        <input id="set_min_hp" type="number" min="20" max="100">
-        <label>Лечиться до HP</label>
-        <input id="set_recover" type="number" min="21" max="100">
-        <label>Реген: секунд на 1 HP (меньше = быстрее)</label>
-        <input id="set_sec_hp" type="number" min="5" max="600">
-        <label style="display:flex;align-items:center;gap:7px;margin-top:8px;cursor:pointer">
-          <input id="set_regen_auto" type="checkbox" style="width:auto"> Авто-реген (считать по бонусам с главной)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_auto_kazna" type="checkbox" style="width:auto"> 🏦 Авто-казна (сбор → депозит → реинвест)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_bank_gold" type="checkbox" style="width:auto"> 🪙 Класть в казну и золото (иначе — только серебро, золото свободно на оборону)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_auto_oboz" type="checkbox" style="width:auto"> 🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_auto_defense" type="checkbox" style="width:auto"> 🛡️ Авто-оборона (ров + частокол активны + запас)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_pierce" type="checkbox" style="width:auto"> 🧱 Пробивать ров/частокол у целей (иначе — пропускать)</label>
-        <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer">
-          <input id="set_hit_shields" type="checkbox" style="width:auto"> 🏹 Сносить донат-щит требушетом и фармить (ВКЛ). Выкл — беречь требушеты, щитников пропускать</label>
-        <button class="b-blue" style="margin-top:10px" onclick="saveSettings()">💾 Сохранить настройки</button>
-        <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
-      </div></div>`;
+    ctl=`<details class="acc" open>
+        <summary><span class="acc-ic">🎮</span><span class="acc-t">Управление</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <div class="btns"><button class="b-green" onclick="post('${mid}','start')">▶ Запустить</button>
+            <button class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
+          <button id="nightBtn" class="b-night" style="margin-top:9px" onclick="toggleNight()">🌙 Ночной режим</button>
+          <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
+        </div>
+      </details>
+      <details class="acc">
+        <summary><span class="acc-ic">🎯</span><span class="acc-t">Цели</span><span class="acc-hint">ник в строке</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <textarea id="targets" rows="8" spellcheck="false"></textarea>
+          <button class="b-blue" style="margin-top:10px" onclick="saveTargets()">💾 Сохранить список</button>
+          <div class="note" id="note"></div>
+        </div>
+      </details>
+      <details class="acc">
+        <summary><span class="acc-ic">🛡️</span><span class="acc-t">Щитники — не бить</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <textarea id="donate" rows="4" spellcheck="false" placeholder="ник в строке — бот их пропустит, требушеты не потратит"></textarea>
+          <button class="b-blue" style="margin-top:10px" onclick="saveDonate()">💾 Сохранить щитников</button>
+          <div class="note" id="dnote">Впиши тех, у кого донат-щит (Купол/Стена) — бот их не тронет. Бот и сам заносит сюда, кого распознал (1 требушет на распознавание).</div>
+        </div>
+      </details>
+      <details class="acc">
+        <summary><span class="acc-ic">⚔️</span><span class="acc-t">Настройки боя</span><span class="acc-hint">10 параметров</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <div class="grid2">
+            <div><label class="ctl-l">Воевать, пока моё HP выше (иначе — лечиться)</label><input id="set_min_hp" type="number" min="20" max="100"></div>
+            <div><label class="ctl-l">Лечиться до HP</label><input id="set_recover" type="number" min="21" max="100"></div>
+            <div><label class="ctl-l">Реген: секунд на 1 HP (меньше = быстрее)</label><input id="set_sec_hp" type="number" min="5" max="600"></div>
+          </div>
+          <div class="grid2" style="margin-top:14px">
+            ${swHTML('set_regen_auto','Авто-реген (считать по бонусам с главной)')}
+            ${swHTML('set_auto_kazna','🏦 Авто-казна (сбор → депозит → реинвест)')}
+            ${swHTML('set_bank_gold','🪙 Класть в казну и золото (иначе — только серебро, золото на оборону)')}
+            ${swHTML('set_auto_defense','🛡️ Авто-оборона (ров + частокол активны + запас)')}
+            ${swHTML('set_pierce','🧱 Пробивать ров/частокол у целей (иначе — пропускать)')}
+            ${swHTML('set_hit_shields','🏹 Сносить донат-щит требушетом и фармить (выкл — беречь требушеты)')}
+            ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
+            ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
+          </div>
+          <button class="b-blue" style="margin-top:14px" onclick="saveSettings()">💾 Сохранить настройки</button>
+          <div class="note" id="snote">Меняется на лету — бот подхватит в ближайший цикл.</div>
+        </div>
+      </details>`;
   } else {
     const fields=(m.fields||[]).map(fieldHTML).join('');
     const sels=(m.selects||[]).map(selectHTML).join('');
@@ -1038,27 +1139,40 @@ function render(mid){
     }).join('');
     let resultBox='';
     if(m.result_file){
-      resultBox=`<label style="margin-top:12px">🎯 Найденные ники (можно выделять/править)</label>
-        <textarea id="results" rows="12" spellcheck="false" placeholder="здесь появятся найденные ники после «Найти цели»"></textarea>
-        <div class="btns">
-          <button class="b-blue" onclick="copyResults()">📋 Копировать</button>
-          ${m.result_send_to?`<button class="b-green" onclick="sendResults('${m.result_send_to}')">➡️ В Набеги</button>`:''}
+      resultBox=`<details class="acc" open>
+        <summary><span class="acc-ic">🎯</span><span class="acc-t">Найденные ники</span><span class="acc-hint">можно править</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <textarea id="results" rows="12" spellcheck="false" placeholder="здесь появятся найденные ники после «Найти цели»"></textarea>
+          <div class="btns" style="margin-top:10px">
+            <button class="b-blue" onclick="copyResults()">📋 Копировать</button>
+            ${m.result_send_to?`<button class="b-green" onclick="sendResults('${m.result_send_to}')">➡️ В Набеги</button>`:''}
+          </div>
+          <div class="note" id="rnote"></div>
         </div>
-        <div class="note" id="rnote"></div>`;
+      </details>`;
     }
-    side=`<div class="side">${fields}${sels}<div class="btns">${acts}
-      <button class="b-red" onclick="post('${mid}','stop')">⏹ Стоп</button></div>
-      <div class="note" id="note"></div>${resultBox}</div>`;
+    ctl=`<details class="acc" open>
+        <summary><span class="acc-ic">🎛️</span><span class="acc-t">Параметры</span><span class="chev"></span></summary>
+        <div class="acc-body">${fields}${sels}
+          <div class="btns" style="margin-top:14px">${acts}
+            <button class="b-red" onclick="post('${mid}','stop')">⏹ Стоп</button></div>
+          <div class="note" id="note"></div>
+        </div>
+      </details>${resultBox}`;
   }
-  main.innerHTML=`<p class="desc">${m.desc||''} <span id="mpill"></span></p>
-    <div class="row"><div class="col-log"><pre class="log" id="log">…</pre></div>${side}</div>`;
+  main.innerHTML=head+`<div class="controls">${ctl}</div>
+    <section class="console"><div class="console-bar"><span class="live">LIVE</span>
+      <span class="console-name">Журнал — ${m.title}</span>
+      <span class="console-meta">автоскролл</span></div>
+      <pre class="log" id="log">…</pre></section>`;
   if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
   pollMod(); timer=setInterval(pollMod,1500);
 }
 let nightOn=false;
 async function pollMod(){
   try{ const r=await fetch('/api/'+active+'/status'); const d=await r.json();
-    const mp=$('#mpill'); if(mp) mp.innerHTML=pill(d.state);
+    const mp=$('#mpill'); if(mp) mp.innerHTML=pill(d.state); petState=d.state||'run';
+    if(d.log){ var _l=(d.log.trim().split('\n').pop()||''); if(_l!==petLastLine){ petLastLine=_l; var _e=classifyLog(_l); if(_e) petEvent=_e; } }
     const nb=$('#nightBtn'); if(nb){ nightOn=!!d.night;
       nb.className='b-night'+(nightOn?' on':'');
       nb.textContent=nightOn?'🌙 Ночной режим: ВКЛ':'🌙 Ночной режим'; }
@@ -1177,6 +1291,136 @@ async function init(){
   $('#tabs').innerHTML=CFG.map(m=>`<span class="tab" data-id="${m.id}" onclick="render('${m.id}')">${m.emoji} ${m.title}</span>`).join('');
   render(CFG[0].id);
 }
+/* ── ПИКСЕЛЬНЫЙ КОТ-КОМПАНЬОН (Рыжик) ─────────────────────────── */
+(function setupPet(){
+  var cv=document.getElementById('petCat'); if(!cv) return;
+  var say=document.getElementById('petSay'), bub=document.getElementById('petBubble');
+  var runCv=document.getElementById('petRun'), runCtx=runCv&&runCv.getContext('2d');
+  var railCtx=cv.getContext('2d');
+  var acc=(getComputedStyle(document.documentElement).getPropertyValue('--accent')||'').trim()||'#e6873a';
+  function drk(hex,f){ var n=parseInt(hex.replace('#',''),16); return 'rgb('+Math.round(((n>>16)&255)*f)+','+Math.round(((n>>8)&255)*f)+','+Math.round((n&255)*f)+')'; }
+  var P={K:'#241a1e',G:acc,D:drk(acc,.72),C:'#f3e7cf',E:'#3f9fd6',W:'#f6fbff',N:'#cf7280',I:'#e3a6ac',
+    M:'#c2c7d4',Md:'#767c8f',WD:'#8a5a30',Gd:'#e8c14e',R:'#e0503a',Pu:'#9b7be6',FL:'#ffce4d',FLo:'#ff8a3a',
+    WH:'#f3f0fb',GL:'rgba(120,190,240,.9)',GR:'#4bd08a',HRT:'#ff6b81'};
+  var S=[
+    "...K............K...",
+    "..KIK..........KIK..",
+    "..KIIK........KIIK..",
+    ".KGGGGGGGGGGGGGGGGK.",
+    ".KGGGGGGGGGGGGGGGGK.",
+    ".KGGGGGGGGGGGGGGGGK.",
+    ".KGGEEGGGGGGGEEGGGK.",
+    ".KGGEWGGGGGGGEWGGGK.",
+    ".KGGEEGGGGGGGEEGGGK.",
+    ".KGGGGGGNNGGGGGGGGK.",
+    ".KGGGGCCCCCCCGGGGGK.",
+    "..KGGCCCCCCCCCGGGK..",
+    "..KKGGGGGGGGGGGKK...",
+    ".KGGGGGGGGGGGGGGGK..",
+    "KGGGGGGGGGGGGGGGGGK.",
+    "KGGGGCCCCCCCCCGGGGK.",
+    "KGGGGCCCCCCCCCGGGGK.",
+    ".KGGGGGGGGGGGGGGGGK.",
+    "..KKGGGGGGGGGGGGKK.."
+  ];
+  var XO=3, g=null, GW=0;
+  function px(x,y,c){ if(x<0||y<0||x>=GW||y>=g.canvas.height) return; g.fillStyle=c; g.fillRect(x,y,1,1); }
+  function rct(x,y,w,h,c){ g.fillStyle=c; g.fillRect(x,y,w,h); }
+  function paw(x,y){ rct(x,y,3,3,P.K); rct(x,y,3,2,P.G); px(x+1,y+2,P.K); }
+  function tail(yo,dx,up){ var cs=up?[[16,13],[17,12],[18,12],[18,11]]:[[16,14],[17,15],[18,15],[18,16]]; cs.forEach(function(p){px(p[0]+XO+dx,p[1]+yo,P.G);}); var e=cs[cs.length-1]; px(e[0]+XO+dx,e[1]+yo,P.D); }
+  function body(yo,dx,ph,run,blink,hh){
+    tail(yo,dx, run?(ph<2):true);
+    for(var r=0;r<S.length;r++){ var row=S[r]; for(var c=0;c<row.length;c++){ var ch=row[c]; if(ch==='.')continue; if(hh && r<=5) continue; px(c+XO+dx, r+yo, P[ch]); } }
+    px(6+XO+dx,4+yo,P.D); px(8+XO+dx,4+yo,P.D); px(11+XO+dx,4+yo,P.D);
+    if(!blink){ px(5+XO+dx,7+yo,P.K); px(14+XO+dx,7+yo,P.K); }
+    else { [[4,7],[5,7],[13,7],[14,7]].forEach(function(p){px(p[0]+XO+dx,p[1]+yo,P.G);}); [[4,7],[5,7],[13,7],[14,7]].forEach(function(p){px(p[0]+XO+dx,p[1]+yo,P.K);}); }
+    var a=run?(ph<2?0:-1):0, b=run?(ph<2?-1:0):0;
+    paw(5+XO+dx,19+yo+a); paw(12+XO+dx,19+yo+b);
+  }
+  function helm(yo,dx){ var x=XO+dx; rct(x+4,2+yo,10,4,P.M); rct(x+3,5+yo,12,1,P.Md); px(x+9,1+yo,P.R); px(x+9,0+yo,P.R); rct(x+9,6+yo,1,3,P.Md); }
+  function crown(yo,dx){ var x=XO+dx; rct(x+4,2+yo,10,3,P.Gd); px(x+4,1+yo,P.Gd); px(x+9,0+yo,P.Gd); px(x+13,1+yo,P.Gd); px(x+9,3+yo,P.R); }
+  function wizard(yo,dx){ var x=XO+dx; rct(x+7,2+yo,5,3,P.Pu); px(x+8,1+yo,P.Pu); px(x+9,0+yo,P.Pu); px(x+9,-1+yo,P.Gd); }
+  function shield(yo){ rct(1,11+yo,4,8,P.Md); rct(0,12+yo,5,6,P.M); rct(2,14+yo,1,3,P.R); px(2,13+yo,P.Gd); }
+  function spear(yo,dx){ var x=23+dx; for(var y=4;y<=20;y++) px(x,y+yo,P.WD); px(x,3+yo,P.M); px(x-1,4+yo,P.M); px(x+1,4+yo,P.M); px(x,2+yo,P.M); }
+  function clock(yo,ring){ rct(0,9+yo,7,8,P.Md); rct(1,10+yo,5,6,P.WH); px(3,11+yo,P.K); px(2,13+yo,P.K); px(3,13+yo,P.K); px(0,8+yo,P.Md); px(6,8+yo,P.Md); px(0,17+yo,P.Md); px(6,17+yo,P.Md); if(ring){ px(-1,8+yo,P.Gd); px(7,8+yo,P.Gd); px(-1,11+yo,P.Gd); px(7,11+yo,P.Gd); } }
+  function torch(yo,f){ var x=23; for(var y=10;y<=19;y++) px(x,y+yo,P.WD); px(x,9+yo,P.FLo); px(x,8+yo-(f?1:0),P.FL); px(x-1,9+yo,P.FLo); px(x+1,9+yo,P.FLo); }
+  function glass(yo){ var x=22; rct(x,6+yo,5,5,P.Md); rct(x+1,7+yo,3,3,P.GL); px(x+4,11+yo,P.WD); px(x+5,12+yo,P.WD); }
+  function binoc(yo){ var x=22; rct(x,7+yo,2,4,P.Md); rct(x+3,7+yo,2,4,P.Md); px(x+1,8+yo,P.GL); px(x+4,8+yo,P.GL); }
+  function cross(yo){ rct(20,3+yo,3,1,P.GR); rct(21,2+yo,1,3,P.GR); px(23,5+yo,P.HRT); }
+  function coins(yo,t){ px(1,(6+(t*2)%12)+yo,P.Gd); px(24,(4+((t*2)+5)%12)+yo,P.Gd); }
+  function zzz(yo){ px(20,4,P.WH); px(21,3,P.WH); px(22,2,P.WH); }
+
+  function drawScene(ctx, cw, o){
+    g=ctx; GW=cw; ctx.clearRect(0,0,cw,ctx.canvas.height);
+    var id=o.id, working=o.working, sleeping=o.sleeping, ev=o.event, t=o.t;
+    var ph=Math.floor(o.roam?t/4:t)%4;
+    var bob=working?(ph<2?0:1):(sleeping?2:1);
+    var hop=0; if(o.jump){ var e=performance.now()-o.jump; if(e<620) hop=-Math.round(Math.sin(e/620*Math.PI)*6); }
+    var jit=0;
+    if(ev&&id==='raids'){ if(ev.kind==='alarm') jit=(t%2?1:-1); if(ev.kind==='win'&&!o.jump&&ph>=2) hop-=2; }
+    var yo=2+bob+hop, dx=((working&&id==='raids')?(ph<2?0:1):0)+jit;
+    var helmet=working&&id==='raids'&&!(ev&&ev.kind==='heal');
+    if(id==='raids') shield(yo);
+    if(id==='caves') torch(yo,ph<2);
+    body(yo,dx,ph,working,(t%24<2)||sleeping,helmet);
+    if(sleeping){ zzz(yo); }
+    else if(id==='raids'){ if(helmet) helm(yo,dx); spear(yo,dx); }
+    else if(id==='roles'){ var k=Math.floor(t/8)%3; (k===0?helm:k===1?crown:wizard)(yo,0); }
+    else if(id==='alarms'){ clock(yo, working&&ph<2); }
+    else if(id==='find'){ glass(yo); }
+    else if(id&&id!=='caves'&&!o.roam){ binoc(yo); }
+    if(ev&&id==='raids'){ if(ev.kind==='heal') cross(yo); if(ev.kind==='win'||ev.kind==='loot') coins(yo,t); }
+  }
+
+  function label(id,working,sleeping,ev){
+    if(sleeping) return '😴 Спит';
+    if(ev&&id==='raids') return ev.emoji+' '+ev.text;
+    if(id==='raids') return working?'⚔️ В бою':'🛡️ Наготове';
+    if(id==='roles') return '🎭 Переодевается';
+    if(id==='alarms') return working?'⏰ Заводит':'⏰ Будильник';
+    if(id==='caves') return '🕳️ В пещере';
+    if(id==='find') return '🔎 Ищет цели';
+    if(id) return working?'🔭 Разведка':'😺 Ждёт';
+    return working?'🐾 Бежит':'😺 Ждёт';
+  }
+
+  var t=0, jumpAt=0, emote=null;
+  var MEOWS=['мяу','мур','🐟','❤️','😺','🐾'];
+  function frame(){
+    var mode=(petState||'run'), id=(active||'');
+    var working=mode==='run', sleeping=mode==='idle'||mode==='stopped';
+    var ev=(petEvent && performance.now()-petEvent.at<3500)?petEvent:null;
+    var jmp=(jumpAt&&performance.now()-jumpAt<620)?jumpAt:0;
+    drawScene(railCtx, cv.width, {id:id,working:working,sleeping:sleeping,event:ev,t:t,jump:jmp,roam:false});
+    var b='';
+    if(emote && performance.now()-emote.at<1500) b=emote.txt;
+    else if(ev && id==='raids') b=ev.emoji;
+    if(bub){ bub.textContent=b; bub.style.opacity=b?'1':'0'; }
+    var lb=label(id,working,sleeping, emote?null:ev);
+    if(say && say.textContent!==lb) say.textContent=lb;
+    t++;
+  }
+  frame(); setInterval(frame, 150);
+
+  cv.title='Тыкни меня 🐾 (двойной клик — пробегусь)';
+  cv.addEventListener('click', function(){ jumpAt=performance.now(); emote={txt:MEOWS[Math.floor(Math.random()*MEOWS.length)], at:performance.now()}; });
+
+  var roaming=false;
+  function roam(){
+    if(roaming||!runCtx) return; roaming=true; runCv.style.display='block';
+    var w=window.innerWidth, x=-110, rt=0;
+    (function step(){
+      x+=6; runCv.style.left=x+'px';
+      drawScene(runCtx, runCv.width, {id:'',working:true,sleeping:false,event:null,t:rt,jump:0,roam:true});
+      rt++;
+      if(x<w+40) requestAnimationFrame(step);
+      else { roaming=false; runCv.style.display='none'; }
+    })();
+  }
+  cv.addEventListener('dblclick', roam);
+  setInterval(function(){ if(!roaming && document.visibilityState!=='hidden' && Math.random()<0.3) roam(); }, 42000);
+})();
+
 init();
 </script></body></html>
 """
@@ -1188,28 +1432,28 @@ LOGIN_PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <style>
  :root{color-scheme:light dark;
    --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,Helvetica,Arial,sans-serif;
-   --bg:#0a0a0c;--card:#1c1c1e;--elev:#2c2c2e;--ink:#f5f5f7;--mut:#9a9aa2;
-   --line:rgba(255,255,255,.10);--green:#30d158;--red:#ff453a;--blue:#0a84ff;
-   --shadow:0 24px 60px rgba(0,0,0,.55),0 1px 0 rgba(255,255,255,.05) inset;}
- @media (prefers-color-scheme:light){:root{--bg:#f2f2f7;--card:#fff;--elev:#fff;--ink:#1d1d1f;--mut:#6e6e73;
-   --line:rgba(0,0,0,.10);--green:#34c759;--red:#ff3b30;--blue:#007aff;--shadow:0 24px 60px rgba(0,0,0,.14);}}
+   --bg:#1f1830;--card:#292140;--elev:#372d55;--ink:#f0eafa;--mut:#b2a6ce;--accent:#e6873a;
+   --line:rgba(185,160,255,.12);--green:#3fbe86;--red:#f05a6b;--blue:#e6873a;
+   --shadow:0 24px 60px rgba(0,0,0,.62),0 1px 0 rgba(255,255,255,.05) inset;}
+ @media (prefers-color-scheme:light){:root{--bg:#efe9f9;--card:#ffffff;--elev:#ffffff;--ink:#2a2340;--mut:#6f6690;--accent:#d9772a;
+   --line:rgba(110,80,190,.12);--green:#1fa877;--red:#e24a5c;--blue:#d9772a;--shadow:0 24px 60px rgba(80,55,150,.2);}}
  *{box-sizing:border-box}
  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
    color:var(--ink);letter-spacing:-.011em;-webkit-font-smoothing:antialiased;
    font:15px/1.5 var(--font);
-   background:radial-gradient(900px 500px at 50% -10%,color-mix(in srgb,var(--blue) 16%,transparent),transparent 60%),var(--bg)}
+   background:radial-gradient(900px 500px at 50% -10%,color-mix(in srgb,var(--accent) 15%,transparent),transparent 60%),var(--bg)}
  .box{width:380px;max-width:94vw;background:var(--card);border:.5px solid var(--line);
    border-radius:22px;padding:30px 26px;box-shadow:var(--shadow)}
- h1{font-size:22px;margin:0 0 5px;font-weight:680;letter-spacing:-.025em}
+ h1{font-size:23px;margin:0 0 5px;font-weight:750;letter-spacing:-.02em;color:var(--ink)}
  .sub{color:var(--mut);font-size:13.5px;margin:0 0 20px;line-height:1.45}
  label{display:block;color:var(--mut);font-size:12px;font-weight:510;margin:14px 0 5px}
  input{width:100%;background:color-mix(in srgb,var(--elev) 60%,transparent);color:var(--ink);
    border:.5px solid var(--line);border-radius:12px;padding:13px;font:16px var(--font);outline:none;
    transition:border-color .18s,box-shadow .18s}
- input:focus{border-color:var(--blue);box-shadow:0 0 0 4px color-mix(in srgb,var(--blue) 22%,transparent)}
+ input:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 24%,transparent)}
  button{width:100%;margin-top:18px;font:600 15px var(--font);letter-spacing:-.01em;border:0;border-radius:13px;
    padding:14px;cursor:pointer;color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);
-   background:linear-gradient(180deg,color-mix(in srgb,var(--green) 90%,#fff),var(--green));
+   background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 90%,#fff),var(--accent));
    transition:transform .09s ease,filter .15s}
  button:hover{filter:brightness(1.07)} button:active{transform:scale(.985)} button:disabled{opacity:.5;cursor:default}
  button.ghost{background:transparent;border:.5px solid var(--line);color:var(--mut);font-weight:500;font-size:13.5px;margin-top:10px}
@@ -1225,7 +1469,7 @@ LOGIN_PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <div class="box">
   <h1>🏰 Вход в Холоп</h1>
   <p class="sub">Войди своим Telegram — пульт будет работать на твоём аккаунте.
-    <span style="color:#8a8f98">v__VERSION__</span></p>
+    <span style="color:var(--mut)">v__VERSION__</span></p>
 
   <div id="step-phone">
     <label>Номер телефона (как в Telegram)</label>
@@ -1260,7 +1504,6 @@ async function api(path,data){
     const r=await fetch('/api/auth/'+path,{method:'POST',body:JSON.stringify(data||{})});
     return await r.json();
   }catch(e){
-    // сервер не ответил / вернул не-JSON — иначе кнопка залипала без объяснений
     return {ok:false, err:'Панель не ответила. Проверь, что окно пульта не закрыто, и попробуй ещё раз.'};
   }
 }
@@ -1273,7 +1516,6 @@ async function sendCode(sms){
   const d=await api('send_code',{phone, sms:!!sms});
   if(b) b.disabled=false;
   if(!d.ok){note(d.err||'Ошибка','err');return;}
-  // ГЛАВНОЕ: явно пишем, КУДА ушёл код — люди ждут SMS, а он в самом Telegram
   note(d.where||'Код отправлен.', d.kind==='sms'?'ok':'');
   show('step-code'); $('code').focus();
 }
