@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-11"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.25-12"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -555,7 +555,7 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
                            "auto_oboz": False, "war_mode": False, "human_mode": False,
-                           "notify_dm": True}
+                           "notify_dm": False}
 
 
 def load_smash_settings():
@@ -800,6 +800,8 @@ class H(BaseHTTPRequestHandler):
             self._send(200, page, "text/html; charset=utf-8")
         elif p == "/api/auth/status":
             self._json({"authorized": is_authorized()})
+        elif p == "/api/version":
+            self._json({"version": VERSION})       # для авто-перезагрузки страницы при обнове
         elif p == "/api/config":
             self._json(ui_config())
         elif p == "/api/targets":
@@ -1165,6 +1167,7 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
  .guide-body b{color:var(--ink);font-weight:650}
  .guide-body code{font:12.5px var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
  .guide-body i{color:var(--mut)}
+ .upd-banner{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:200;background:var(--accent);color:#2a1206;font-weight:650;font-size:14px;padding:11px 20px;border-radius:12px;box-shadow:var(--shadow);animation:rise .3s both}
 </style></head><body>
 <div class="app">
 <aside class="rail">
@@ -1417,7 +1420,7 @@ async function loadSettings(){
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
-    const nt=$('#set_notify'); if(nt) nt.checked=(d.notify_dm!==false);
+    const nt=$('#set_notify'); if(nt) nt.checked=!!d.notify_dm;
     if(c) c.disabled=!!(ra&&ra.checked);
   }catch(e){}
 }
@@ -1447,7 +1450,7 @@ const GUIDE_SECTIONS=[
  ['🚀','С чего начать',`
    <p><b>Пульт</b> — это панель управления твоим ботом для игры @holop. Всё работает <b>локально на твоём компьютере</b>, вход в Telegram никуда не уходит.</p>
    <p><b>Запуск:</b> двойной клик по <code>START.bat</code> (Windows) или <code>START-mac.command</code> (Mac). Откроется вкладка в браузере — это и есть пульт.</p>
-   <p><b>Обновления прилетают сами.</b> Чтобы обнова применилась, <b>полностью закрой окно пульта и запусти заново</b> — запуск сам подтянет свежую версию с сервера. Версия видна внизу слева; свежая — значит всё на месте.</p>
+   <p><b>Обновления прилетают сами.</b> Панель сама заметит новую версию и перезагрузится — ручной Cmd+Shift+R больше не нужен. Если новых функций всё же нет — полностью закрой окно пульта и запусти заново. Версия видна внизу слева.</p>
    <p><b>Тема:</b> переключатель «🌑 Чёрная тема» внизу слева — обычная или максимально чёрная. В чёрной кот надевает маску ниндзя 🥷.</p>
    <p><b>Вкладки слева</b> — это разделы. Кот 🐾 внизу живой: реагирует на то, что делает бот. Тыкни его; двойной клик — пробежится.</p>`],
  ['🟢','Кнопки запуска',`
@@ -1520,6 +1523,22 @@ function toggleTheme(){
   applyTheme();
 }
 applyTheme();   // применяем сразу, до отрисовки
+
+// 🔄 авто-перезагрузка при обнове: если версия на сервере сменилась — сама подхватит
+// свежую страницу (больше не нужен ручной Cmd+Shift+R).
+const PAGE_VERSION="__VERSION__";
+async function checkVersion(){
+  try{
+    const d=await (await fetch('/api/version',{cache:'no-store'})).json();
+    if(d.version && d.version!==PAGE_VERSION){
+      const b=document.createElement('div'); b.className='upd-banner';
+      b.textContent='🔄 Пришло обновление ('+d.version+') — обновляю панель…';
+      document.body.appendChild(b);
+      setTimeout(()=>location.reload(true), 1200);
+    }
+  }catch(e){}
+}
+setInterval(checkVersion, 12000);
 
 async function init(){
   CFG=await (await fetch('/api/config')).json();
