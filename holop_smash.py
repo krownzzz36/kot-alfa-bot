@@ -108,6 +108,23 @@ DEFAULTS = {
 }
 
 
+# ⚔️ РЕЖИМ «ВОЙНА» — держать цели прижатыми: бить сразу, как только можно.
+# Переопределяет тайминги на агрессивные. ВНИМАНИЕ: это максимальное палево —
+# запросов к игре кратно больше. Включать осознанно, галочкой.
+WAR_OVERRIDES = {
+    "jitter_lo": 1, "jitter_hi": 4,          # бьём почти ровно по истечении КД
+    "inter_hit_lo": 1.5, "inter_hit_hi": 4,  # короткая пауза между целями
+    "shield_default_retry": 3,               # щит могут снять раньше — перепроверяем часто
+    "weak_retry": 3,                         # цель «слаба» — вернуться быстро
+    "notfound_retry": 2,
+    "defended_retry": 5,
+}
+WAR_NAP_CAP = 30.0        # максимум сна, когда все цели на КД (обычный режим — 120с)
+WAR_NAP_FLOOR = 2.0       # минимум сна (обычный — 5с)
+WAR_WEAK_CAP = 90.0       # максимум ожидания регена цели, сек — дальше перепроверим вживую
+WAR_SHIELD_PAD = 3        # через сколько сек после конца щита пробовать (обычный — 30)
+
+
 def heal_recheck_secs(s):
     """Интервал перечитывания HP при лечении с небольшим рандомом (не долбить ровно по таймеру)."""
     j = s.get("heal_recheck_jitter", 0)
@@ -417,6 +434,7 @@ class Smasher:
         self._next_defense = 0.0      # когда следующий раз проверять оборону
         self._last_attack_id = 0      # id последнего замеченного пуша «НА ТЕБЯ НАПАЛИ»
         self._auto_oboz = False       # авто-покупка обоза (+50% серебра с набегов)
+        self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
         self._heal_sample = None      # (время, HP) — для замера фактического регена
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
@@ -471,6 +489,18 @@ class Smasher:
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._hit_shields = bool(data.get("hit_shields", getattr(self, "_hit_shields", True)))
         self._auto_oboz = bool(data.get("auto_oboz", getattr(self, "_auto_oboz", False)))
+        # ⚔️ ВОЙНА: агрессивные тайминги поверх обычных (на лету вкл/выкл)
+        was_war = getattr(self, "_war_mode", False)
+        self._war_mode = bool(data.get("war_mode", False))
+        if self._war_mode:
+            self.s.update(WAR_OVERRIDES)
+            if not was_war:
+                log("⚔️⚔️ РЕЖИМ ВОЙНЫ ВКЛЮЧЁН — бью по КД без пауз, держу цели прижатыми. "
+                    "Запросов к игре кратно больше (палевно).")
+        elif was_war:
+            for k in WAR_OVERRIDES:
+                self.s[k] = DEFAULTS[k]      # вернуть спокойные тайминги
+            log("🕊️ Режим войны выключен — вернул обычные тайминги.")
 
     def ensure_targets_file(self):
         """Если файла целей нет — создать с текущим списком (чтобы панель могла его показать)."""
@@ -881,6 +911,10 @@ class Smasher:
             now_active, now_stock, _, _ = self._defense_state(dmsg, name)
             if now_active:
                 log(f"  🛡️ {name}: АКТИВИРОВАН ✔ (запас {now_stock})")
+            elif now_stock < stock:
+                # запас уменьшился — предмет точно потрачен на активацию, просто экран
+                # ещё не успел перерисовать ⏱️. Считаем успехом, чтобы не тратить второй.
+                log(f"  🛡️ {name}: активирован ✔ (запас {stock}→{now_stock}, таймер ещё не отрисован)")
             else:
                 log(f"  ⚠️ {name}: активация НЕ подтвердилась (запас {now_stock}) — повторю в след. заход")
         elif active:
@@ -1204,7 +1238,10 @@ class Smasher:
             if hp is not None and hp <= s["tgt_min_hp"]:
                 goal = s["tgt_min_hp"] + 1        # бить можно уже с 20+ HP — ждём только до этого
                 wait_min = max(1.0, (goal - hp) * s["min_per_hp"])
-                self.next_ok[name] = time.time() + wait_min * 60
+                wait_s = wait_min * 60
+                if self._war_mode:
+                    wait_s = min(wait_s, WAR_WEAK_CAP)   # реген цели может быть быстрее расчёта
+                self.next_ok[name] = time.time() + wait_s
                 log(f"  💤 {name}: HP {hp} ≤ {s['tgt_min_hp']} — жду до {goal}+ ~{wait_min:.0f}м")
                 return
             outcome, loot, my_after = await self.attack(res, positions[idx], name)
@@ -1289,7 +1326,10 @@ class Smasher:
             if hp is not None and hp <= s["tgt_min_hp"]:
                 goal = s["tgt_min_hp"] + 1        # ждём только до 20+ HP, а не до 50
                 wait_min = max(1.0, (goal - hp) * s["min_per_hp"])
-                self.next_ok[name] = time.time() + wait_min * 60
+                wait_s = wait_min * 60
+                if self._war_mode:
+                    wait_s = min(wait_s, WAR_WEAK_CAP)   # реген цели может быть быстрее расчёта
+                self.next_ok[name] = time.time() + wait_s
                 log(f"  💤 {name}: слаб (HP {hp}) — жду до {goal}+ ~{wait_min:.0f}м")
             else:
                 self.next_ok[name] = time.time() + s["weak_retry"] * 60
@@ -1298,7 +1338,7 @@ class Smasher:
         # щит → в профиль за таймером
         secs = await self.shield_seconds(name)
         if secs and secs > 0:
-            self.next_ok[name] = time.time() + secs + 30
+            self.next_ok[name] = time.time() + secs + (WAR_SHIELD_PAD if self._war_mode else 30)
             log(f"  🛡️ {name}: под щитом ещё ~{fmt_secs(secs)} — таймер поставлен")
         else:
             self.next_ok[name] = time.time() + s["shield_default_retry"] * 60
@@ -1902,8 +1942,11 @@ class Smasher:
         if not eligible:
             soonest = min(self.next_ok.get(t, 0.0) for t in active)
             # потолок сна 120с — чтобы проверка на бочку срабатывала не реже ~2 мин
-            nap = max(5.0, min(soonest - now, 120.0))
-            log(f"⏳ Все цели на КД — сплю {fmt_secs(nap)} (мои HP {my_hp})")
+            # в ВОЙНЕ просыпаемся почти ровно к освобождению цели (секунды решают)
+            cap = WAR_NAP_CAP if self._war_mode else 120.0
+            floor = WAR_NAP_FLOOR if self._war_mode else 5.0
+            nap = max(floor, min(soonest - now, cap))
+            log(f"{'⚔️' if self._war_mode else '⏳'} Все цели на КД — сплю {fmt_secs(nap)} (мои HP {my_hp})")
             return await self.sleep_gated(nap)
 
         log(f"── Проход: доступно целей {len(eligible)}, мои HP {my_hp}")

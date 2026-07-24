@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.24-2"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.24-3"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -546,7 +546,7 @@ def save_donate(text):
 SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 60,
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
-                           "auto_oboz": False}
+                           "auto_oboz": False, "war_mode": False}
 
 
 def load_smash_settings():
@@ -579,6 +579,7 @@ def save_smash_settings(body):
         out["hit_shields"] = bool(body.get("hit_shields", cur["hit_shields"]))
         out["bank_gold"] = bool(body.get("bank_gold", cur["bank_gold"]))
         out["auto_oboz"] = bool(body.get("auto_oboz", cur["auto_oboz"]))
+        out["war_mode"] = bool(body.get("war_mode", cur["war_mode"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -1001,6 +1002,10 @@ function render(mid){
       <div class="note" id="dnote">Впиши тех, у кого донат-щит (Купол/Стена) — бот их не тронет. Бот и сам заносит сюда, кого распознал (1 требушет на распознавание).</div>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
         <div style="font-weight:700;font-size:13px;margin-bottom:2px">⚔️ Настройки боя</div>
+        <label style="display:flex;align-items:center;gap:7px;margin:8px 0 4px;cursor:pointer;
+                      padding:8px;border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent)">
+          <input id="set_war" type="checkbox" style="width:auto"> <b>⚔️ РЕЖИМ ВОЙНЫ</b> — бить по КД без пауз,
+          держать цели прижатыми (много запросов, палевно)</label>
         <label>Воевать, пока моё HP выше (иначе — лечиться)</label>
         <input id="set_min_hp" type="number" min="20" max="100">
         <label>Лечиться до HP</label>
@@ -1144,6 +1149,7 @@ async function loadSettings(){
     const hs=$('#set_hit_shields'); if(hs) hs.checked=!!d.hit_shields;
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
+    const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     if(c) c.disabled=!!(ra&&ra.checked);
   }catch(e){}
 }
@@ -1157,7 +1163,8 @@ async function saveSettings(){
     pierce_defenses:!!($('#set_pierce')||{}).checked,
     hit_shields:!!($('#set_hit_shields')||{}).checked,
     bank_gold:!!($('#set_bank_gold')||{}).checked,
-    auto_oboz:!!($('#set_auto_oboz')||{}).checked};
+    auto_oboz:!!($('#set_auto_oboz')||{}).checked,
+    war_mode:!!($('#set_war')||{}).checked};
   try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json(); const n=$('#snote');
     if(n){ n.textContent=d.ok?'✅ настройки сохранены — применятся в ближайший цикл':'ошибка сохранения';
