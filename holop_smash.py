@@ -129,6 +129,7 @@ WAR_SHIELD_PAD = 3        # через сколько сек после конц
 # страниц и собираем ники доступных к атаке целей — а бьём их обычным do_target()
 # (то же лечение/статистика/КД/ров-частокол). Ограничения — чтобы проход был конечным.
 HUNT_MAX_PAGES = 5        # сколько страниц арены пролистать за проход (соберём пул атакуемых)
+HUNT_MAX_HITS = 10        # сколько целей набрать за проход (потом новый цикл, свежая выборка)
 
 
 def heal_recheck_secs(s):
@@ -452,7 +453,7 @@ class Smasher:
         self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
         self._human_mode = False      # 🧑 человеческий ритм: иногда «отходит» на перерыв (не замена 24/7!)
         self._next_human_break = 0.0
-        self._notify_dm = True        # 🔔 слать себе в Избранное о критичном (бочка/сессия)
+        self._notify_dm = False       # 🔔 слать себе в Избранное о критичном (по галочке, деф ВЫКЛ)
         self._notify_sent = {}        # ключ события -> когда слали (троттлинг)
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
         self._last_hit_name = None    # последняя обработанная цель — продолжить список отсюда
@@ -571,7 +572,7 @@ class Smasher:
         # 🧑 человеческий режим — ДОПОЛНЕНИЕ, не замена: бот так же фармит (в т.ч. ночью),
         # но иногда «отходит» на перерыв, чтобы активность не была машинно-ровной сутками.
         was_human = getattr(self, "_human_mode", False)
-        self._notify_dm = bool(data.get("notify_dm", True))
+        self._notify_dm = bool(data.get("notify_dm", False))
         self._human_mode = bool(data.get("human_mode", False))
         if self._human_mode and not was_human:
             self._next_human_break = time.time() + random.uniform(1800, 4500)  # первый через 30–75 мин
