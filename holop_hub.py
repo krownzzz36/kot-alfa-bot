@@ -29,9 +29,45 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.26-18"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.26-19"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
-PORT = int(os.environ.get("HOLOP_PORT", "8777"))
+
+
+def _resolve_port():
+    """Порт панели. Для МУЛЬТИОКОННОСТИ (несколько аккаунтов в разных папках) второй
+    аккаунт задаёт свой порт: файл port.txt рядом со скриптом ИЛИ "port" в config.json.
+    Иначе — 8777. Env HOLOP_PORT (для тестов) в приоритете."""
+    env = (os.environ.get("HOLOP_PORT") or "").strip()
+    if env.isdigit():
+        return int(env)
+    try:
+        with open(os.path.join(HERE, "port.txt"), encoding="utf-8") as f:
+            v = f.read().strip()
+        if v.isdigit():
+            return int(v)
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
+            p = json.load(f).get("port")
+        if str(p).isdigit():
+            return int(p)
+    except (OSError, ValueError, TypeError):
+        pass
+    return 8777
+
+
+PORT = _resolve_port()
+
+
+def _script_path(name):
+    """Полный путь к скрипту в ЭТОЙ папке. Мультиоконность: боты запускаем и ищем
+    (pgrep/pkill) по полному пути — чтобы второй аккаунт из другой папки не глушил
+    ботов первого (у Алексея из-за этого крашилось)."""
+    return os.path.join(HERE, name)
+
+
+SMASH_PATH = _script_path("holop_smash.py")
 
 IS_WIN = os.name == "nt"
 # Как запускать дочерние скрипты: на Windows — без всплывающего чёрного окна;
@@ -396,8 +432,9 @@ def is_running(mid):
     script = MOD.get(mid, {}).get("script") if mid != "raids" else "holop_smash.py"
     alive = _pid_alive(read_pid(mid), script)
     if mid == "raids":
-        # набеги мог поднять и «Запустить» (smash.pid), и «Ночной режим» (night_smash.sh)
-        return alive or _pgrep("holop_smash.py") or night_running()
+        # набеги мог поднять и «Запустить» (smash.pid), и «Ночной режим» (night_smash.sh).
+        # pgrep по ПОЛНОМУ пути — не считать «запущенным» бота другого аккаунта.
+        return alive or _pgrep(SMASH_PATH) or night_running()
     return alive
 
 
@@ -443,7 +480,7 @@ def stop_night():
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-        for pat in ("night_smash.sh", "holop_smash.py"):
+        for pat in (NIGHT_SH, SMASH_PATH):    # полный путь — только боты ЭТОЙ папки
             subprocess.run(["pkill", "-f", pat],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     threading.Thread(target=_backstop, daemon=True).start()
@@ -503,7 +540,7 @@ def raids_start():
     if is_running("raids"):
         return
     out = open(path("smash_console.out"), "a", encoding="utf-8")
-    p = subprocess.Popen([PY, "holop_smash.py"], cwd=HERE, stdout=out, stderr=out,
+    p = subprocess.Popen([PY, SMASH_PATH], cwd=HERE, stdout=out, stderr=out,
                          **POPEN_KW)
     with open(pidfile("raids"), "w") as f:
         f.write(str(p.pid))
@@ -517,7 +554,7 @@ def raids_stop():
     _terminate(read_pid("raids"))
     if not IS_WIN:
         try:
-            subprocess.run(["pkill", "-f", "holop_smash.py"],
+            subprocess.run(["pkill", "-f", SMASH_PATH],   # полный путь — не задеть другой аккаунт
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -695,7 +732,7 @@ def oneshot_run(mid, action, fields):
     with open(logp, "a", encoding="utf-8") as f:
         f.write(f"\n═════ {mod['title']}: {action} {' '.join(args)} ═════\n")
     out = open(logp, "a", encoding="utf-8")
-    p = subprocess.Popen([PY, mod["script"], *args], cwd=HERE, stdout=out, stderr=out,
+    p = subprocess.Popen([PY, _script_path(mod["script"]), *args], cwd=HERE, stdout=out, stderr=out,
                          **POPEN_KW)
     with open(pidfile(mid), "w") as f:
         f.write(str(p.pid))
@@ -706,7 +743,7 @@ def oneshot_stop(mid):
     _terminate(read_pid(mid))
     if not IS_WIN:
         try:
-            subprocess.run(["pkill", "-f", MOD[mid]["script"]],
+            subprocess.run(["pkill", "-f", _script_path(MOD[mid]["script"])],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -721,7 +758,7 @@ def _win_sweep_orphans():
     что пережили закрытие cmd. Бьём ТОЛЬКО по командной строке — чужое не заденем."""
     if not IS_WIN:
         return
-    likes = " -or ".join(f"$_.CommandLine -like '*{s}*'" for s in BOT_SCRIPTS)
+    likes = " -or ".join(f"$_.CommandLine -like '*{_script_path(s)}*'" for s in BOT_SCRIPTS)
     ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'py%'\" | "
           f"Where-Object {{ {likes} }} | "
           "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
@@ -745,7 +782,7 @@ def stop_all():
     else:
         for s in BOT_SCRIPTS:
             try:
-                subprocess.run(["pkill", "-f", s],
+                subprocess.run(["pkill", "-f", _script_path(s)],   # только боты ЭТОЙ папки
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
@@ -1553,6 +1590,13 @@ const GUIDE_SECTIONS=[
    <li>Не помогло — нажми кнопку ниже и пришли скачанный файл в чат. В нём все логи разом (пароля и ключа аккаунта там нет).</li></ul>
    <p><a class="dl-logs" href="/api/logs" download="kot-alfa-logs.txt">📥 Скачать логи для поддержки</a></p>
    <p><i>Журнал идёт обычным порядком: новые строки снизу.</i></p>`],
+ ['👥','Несколько аккаунтов (мультиоконность)',`
+   <p>Хочешь качать <b>два аккаунта сразу</b>? Сделай так:</p>
+   <ul>
+   <li><b>Скопируй всю папку пульта</b> рядом (напр. «Пульт-2»). Заходи во второй аккаунт из неё — свой вход, свои цели и настройки.</li>
+   <li>В папке второго аккаунта создай файл <code>port.txt</code> и впиши туда другое число — например <b>8778</b> (у первого остаётся 8777).</li>
+   <li>Запускай обе папки как обычно (двойной клик). Первая откроется на <code>127.0.0.1:8777</code>, вторая — на <code>127.0.0.1:8778</code>.</li></ul>
+   <p>Панели и боты аккаунтов <b>больше не мешают друг другу</b> — запуск/стоп/обнова одного не трогают второй (раньше вторая панель крашилась — починено).</p>`],
 ];
 const GUIDE_HTML=`<div class="guide">
   <div class="guide-lead">Пульт живёт и обновляется — этот гайд обновляется вместе с ним. Разверни любой раздел.</div>

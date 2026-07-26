@@ -65,11 +65,17 @@ rem ---------- 2b. auto-update from GitHub (keeps your login/lists) ----------
 echo   Checking for updates...
 %PYCMD% update.py
 
+rem ---------- 2c. port for THIS account (multi-window) ----------
+rem Second account: put a port.txt (e.g. 8778) next to this file. No file = 8777.
+set "PORT=8777"
+if exist "%~dp0port.txt" set /p PORT=<"%~dp0port.txt"
+set "HOLOP_PORT=%PORT%"
+
 rem ---------- 3. run the panel ----------
 echo(
 echo   --------------------------------------------
 echo    Starting. The browser will open by itself.
-echo    If not, open:  http://127.0.0.1:8777/
+echo    If not, open:  http://127.0.0.1:%PORT%/
 echo(
 echo    DO NOT CLOSE THIS WINDOW (you can minimize it).
 echo    Closing this window = stopping the panel and bots.
@@ -77,10 +83,10 @@ echo   --------------------------------------------
 echo(
 echo START HUB >> "%LOG%"
 
-rem Kill an older panel still holding the port (it serves STALE code)
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*holop_hub.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+rem Kill an older panel of THIS folder only (by full path) so a second account is safe
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*%~dp0holop_hub.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
 
-%PYCMD% holop_hub.py 2>>"%LOG%"
+%PYCMD% "%~dp0holop_hub.py" 2>>"%LOG%"
 
 echo(
 echo   Panel stopped.
