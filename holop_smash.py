@@ -425,8 +425,10 @@ class Smasher:
         self._default_targets = list(cfg.get("smash_targets") or TARGETS)
         self.targets = self.load_targets()
         self.ensure_targets_file()
-        self.lo = float(cfg.get("min_delay", 0.8))
-        self.hi = float(cfg.get("max_delay", 1.8))
+        # пауза между действиями (запросами к игре). Раньше 0.8–1.8с — Максим: машинно
+        # быстро, палево («5±2с, я не робот»). Деф человечнее 1.5–3.5с, крутится из панели.
+        self.lo = float(cfg.get("min_delay", 1.5))
+        self.hi = float(cfg.get("max_delay", 3.5))
         # состояние
         self._cd_cache_path = os.path.join(HERE, "cd_cache.json")  # КД/щиты целей — переживают перезапуск
         self.next_ok = self._load_cd_cache()   # имя -> epoch, когда цель снова доступна (из файла)
@@ -545,6 +547,14 @@ class Smasher:
             except (TypeError, ValueError):
                 pass
         # флаги авто-казны и авто-обороны
+        # пауза между действиями (анти-палево) — крутится из панели на лету
+        try:
+            lo = float(data.get("req_delay_lo", self.lo))
+            hi = float(data.get("req_delay_hi", self.hi))
+            if 0.2 <= lo <= hi <= 20:
+                self.lo, self.hi = lo, hi
+        except (TypeError, ValueError):
+            pass
         self._auto_kazna = bool(data.get("auto_kazna", getattr(self, "_auto_kazna", False)))
         self._bank_gold = bool(data.get("bank_gold", getattr(self, "_bank_gold", False)))  # класть ли золото в казну (деф нет — только серебро)
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
@@ -1347,7 +1357,8 @@ class Smasher:
         if self.dry:
             log(f"  [dry] ударил бы «{name}»")
             return "dry", 0, None
-        before_id = (await self.recent(1))[0].id
+        _rec = await self.recent(1)      # может быть пусто, если @holop прислал битую анимацию
+        before_id = _rec[0].id if _rec else 0
         r, c, _ = pos
         await self.click(search_msg, r, c, label=f"Атаковать {name}")
         # результат: правка того же сообщения ЛИБО новое сообщение
@@ -1783,59 +1794,94 @@ class Smasher:
             return "defused"      # мины больше нет и явного взрыва не видели → считаем обезврежено
         return "unknown"
 
+    # предметы/действия Дружины — их НИКОГДА не путать с фитилём (иначе бот резал
+    # «ПОДЛОЖИТЬ БОЧКУ» = сам подкладывал бочку и она взрывалась). Реальная бочка
+    # 26.07 взорвалась именно из-за этого.
+    _NOT_FUSE = ("подложить", "бочк", "огниво", "зелье", "требушет", "обоз", "мастер",
+                 "магазин", "эликсир", "порох", "дьяв", "назад", "отмена", "закрыть", "купить")
+    _FUSE_COLORS = ("🔴", "🟢", "🔵", "🟡", "🟠", "🟣", "⚪", "⚫", "🟤")
+
+    def _is_fuse_button(self, bt):
+        """Кнопка — это ФИТИЛЬ мини-игры (а не предмет/действие Дружины)?
+        Признак: слово «фитиль» ИЛИ цветной кружок, и НЕ предмет из чёрного списка."""
+        low = (bt or "").lower()
+        if not bt or any(w in low for w in self._NOT_FUSE):
+            return False
+        return "фитил" in low or any(ic in bt for ic in self._FUSE_COLORS)
+
+    def _is_red_fuse(self, bt):
+        return self._is_fuse_button(bt) and (self.s["bomb_fuse"] in (bt or "").lower() or "🔴" in (bt or ""))
+
     async def use_ognivo_red(self):
         dr = await self.open_druzhina()
         if not dr:
             return "noscreen"
-        used = False
+        # ПОЛНЫЙ дамп экрана — чтобы при живой бочке видеть точную раскладку и дошлифовать
+        self._bomb_log("  🧨 экран Дружины/бочки: "
+                       + " | ".join(bt for _, _, bt in self.flat_buttons(dr)))
+        used = None
         for r, c, bt in self.flat_buttons(dr):
             if re.search(r"огниво\s*x\s*\d", (bt or "").lower()):
                 await self.click(dr, r, c, label=bt)
-                used = True
+                used = "огниво"
                 break
+        if not used:   # игра: «используй огниво ИЛИ мастера» — пробуем Мастера (не за ⭐)
+            for r, c, bt in self.flat_buttons(dr):
+                if "мастер" in (bt or "").lower() and STAR not in (bt or ""):
+                    await self.click(dr, r, c, label=bt)
+                    used = "мастер"
+                    self._bomb_log("  🧨 Огнива нет — жму «Мастер»")
+                    break
         if not used:
-            log("  ⚠️ нет кнопки «Огниво xN». Сырые кнопки: "
-                + " | ".join(bt for _, _, bt in self.flat_buttons(dr)))
+            self._bomb_log("  ⛔ нечем разминировать на экране (ни Огнива, ни Мастера)")
             return "no_use_button"
-        await rsleep(0.9)
+        await rsleep(1.0)
+        # 1) быстрый скан: применение Огнива/Мастера могло СРАЗУ обезвредить (без мини-игры).
+        #    Именно скан, НЕ _read_defuse_result — тот открывает Дружину и мог бы увести с
+        #    экрана фитилей и дать ложный «defused».
+        for _ in range(4):
+            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
+                if m.out:
+                    continue
+                low = (m.message or "").lower()
+                if any(w in low for w in DEFUSED_WORDS):
+                    self._bomb_log("  ✅ БОЧКА ОБЕЗВРЕЖЕНА сразу применением Огнива/Мастера.")
+                    return "defused"
+                if any(w in low for w in EXPLODED_WORDS):
+                    return "exploded"
+            await rsleep(0.4)
+        # 2) ищем НАСТОЯЩИЙ экран фитилей — по цветным кнопкам, НЕ по слову в тексте
         fuse = None
         for _ in range(12):
             for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
                 if m.out:
                     continue
-                btns = self.flat_buttons(m)
-                if not btns:
-                    continue
-                if "фитил" in (m.message or "").lower() or \
-                        any(self.s["bomb_fuse"] in (bt or "").lower() or "🔴" in (bt or "")
-                            for _, _, bt in btns):
+                if any(self._is_fuse_button(bt) for _, _, bt in self.flat_buttons(m)):
                     fuse = m
                     break
             if fuse:
                 break
             await rsleep(0.5)
         if not fuse:
-            return await self._read_defuse_result()   # вдруг сразу результат
-        log("  🎲 экран фитиля, кнопки: " + " | ".join(bt for _, _, bt in self.flat_buttons(fuse)))
-        clicked = False
+            # НЕ режем ничего наугад (раньше резали «ПОДЛОЖИТЬ БОЧКУ» — катастрофа).
+            self._bomb_log("  ⚠️ экран фитилей не появился — НЕ режу наугад. Скорее всего "
+                           "Огниво/Мастер уже разминировали; перечитываю итог.")
+            return await self._read_defuse_result()
+        self._bomb_log("  🎲 экран фитилей: "
+                       + " | ".join(bt for _, _, bt in self.flat_buttons(fuse)))
+        # режем красный (bomb_fuse); если красного нет — первый НАСТОЯЩИЙ фитиль (не предмет)
         for r, c, bt in self.flat_buttons(fuse):
-            low = (bt or "").lower()
-            if self.s["bomb_fuse"] in low or "🔴" in (bt or ""):
+            if self._is_red_fuse(bt):
                 await self.click(fuse, r, c, label=bt)
-                clicked = True
-                break
-        if not clicked:      # красный не нашли — режем первый «не служебный» фитиль
-            for r, c, bt in self.flat_buttons(fuse):
-                low = (bt or "").lower()
-                if bt and not any(w in low for w in ("назад", "отмена", "закрыть")):
-                    await self.click(fuse, r, c, label=bt)
-                    log(f"  ⚠️ красный фитиль не найден — резал «{bt}»")
-                    clicked = True
-                    break
-        if not clicked:
-            return "no_fuse_button"
-        await rsleep(1.0)
-        return await self._read_defuse_result()
+                await rsleep(1.0)
+                return await self._read_defuse_result()
+        for r, c, bt in self.flat_buttons(fuse):
+            if self._is_fuse_button(bt):
+                await self.click(fuse, r, c, label=bt)
+                self._bomb_log(f"  ⚠️ красного фитиля нет — режу фитиль «{bt}»")
+                await rsleep(1.0)
+                return await self._read_defuse_result()
+        return "no_fuse_button"
 
     async def recover_after_explosion(self, sp):
         await self.heal_territory(sp)
@@ -2145,13 +2191,13 @@ class Smasher:
                 rem_min = max(1.0, left_hp * s["min_per_hp"])            # оценка минут до полного
                 rem_s = rem_min * 60.0
                 shown = str(hp) if hp is not None else "?"
-                # спим ЧАСТЬ оставшегося (проснёмся ДО цели и перечитаем реальное HP),
-                # потолок ~5 мин. РАНДОМ ПОСЛЕ потолка — чтобы интервалы НЕ совпадали
-                # (Максим: «идеально одинаковое КД — палево»). Далеко от цели — интервал
-                # длиннее, у самой цели — короче.
-                base = rem_s * random.uniform(0.45, 0.7)
-                base = min(base, 90.0 if left_hp <= 4 else 300.0)
-                nap = round(max(40.0, base) * random.uniform(0.82, 1.18))  # ← разброс на потолке
+                # Максим: не долбить HP по 5 раз за лечение — спим ПОЧТИ всё оставшееся
+                # (0.85–1.0), проснёмся у самой цели → 1-2 перечитки вместо пяти. Переспать
+                # не страшно: HP уже восстановится, следующий тик увидит цель и продолжит.
+                # Рандом (после потолка) — анти-палево, чтобы интервалы не совпадали.
+                base = rem_s * random.uniform(0.85, 1.0)
+                base = min(base, 600.0)                       # потолок 10 мин — реже просыпаемся
+                nap = round(max(45.0, base) * random.uniform(0.9, 1.1))  # ← разброс на потолке
                 log(f"🩶 Лечусь: HP {shown}, до {s['my_recover_to']} ~{rem_min:.0f}м "
                     f"(~{s['min_per_hp']*60:.0f} с/HP) — перечитаю через {nap}с")
                 return await self.sleep_gated(nap)

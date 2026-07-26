@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.25-16"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.26-17"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -577,7 +577,8 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "regen_auto": False, "auto_kazna": False, "auto_defense": False,
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
                            "auto_oboz": False, "war_mode": False, "human_mode": False,
-                           "notify_dm": False, "free_hunt": False}
+                           "notify_dm": False, "free_hunt": False,
+                           "req_delay_lo": 1.5, "req_delay_hi": 3.5}
 
 
 def load_smash_settings():
@@ -614,6 +615,9 @@ def save_smash_settings(body):
         out["human_mode"] = bool(body.get("human_mode", cur["human_mode"]))
         out["notify_dm"] = bool(body.get("notify_dm", cur["notify_dm"]))
         out["free_hunt"] = bool(body.get("free_hunt", cur["free_hunt"]))
+        lo = max(0.2, min(float(body.get("req_delay_lo", cur["req_delay_lo"])), 20))
+        hi = max(lo, min(float(body.get("req_delay_hi", cur["req_delay_hi"])), 20))
+        out["req_delay_lo"], out["req_delay_hi"] = round(lo, 1), round(hi, 1)
     except (TypeError, ValueError):
         return False
     try:
@@ -1292,6 +1296,8 @@ function render(mid){
             <div><label class="ctl-l">Воевать, пока моё HP выше (иначе — лечиться)</label><input id="set_min_hp" type="number" min="20" max="100"></div>
             <div><label class="ctl-l">Лечиться до HP</label><input id="set_recover" type="number" min="21" max="100"></div>
             <div><label class="ctl-l">Реген: секунд на 1 HP (меньше = быстрее)</label><input id="set_sec_hp" type="number" min="5" max="600"></div>
+            <div><label class="ctl-l">Пауза между действиями, сек: от (больше = человечнее, менее палевно)</label><input id="set_delay_lo" type="number" min="0.2" max="20" step="0.1"></div>
+            <div><label class="ctl-l">…до</label><input id="set_delay_hi" type="number" min="0.2" max="20" step="0.1"></div>
           </div>
           <div class="grid2" style="margin-top:14px">
             ${swHTML('set_regen_auto','Авто-реген (считать по бонусам с главной)')}
@@ -1458,12 +1464,16 @@ async function loadSettings(){
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
     const nt=$('#set_notify'); if(nt) nt.checked=!!d.notify_dm;
     if(c) c.disabled=!!(ra&&ra.checked);
+    const dl=$('#set_delay_lo'); if(dl && document.activeElement!==dl) dl.value=d.req_delay_lo;
+    const dh=$('#set_delay_hi'); if(dh && document.activeElement!==dh) dh.value=d.req_delay_hi;
   }catch(e){}
 }
 async function saveSettings(){
   const a=$('#set_min_hp'), b=$('#set_recover'); if(!a||!b) return;
   const body={my_min_hp:parseInt(a.value||'25',10), my_recover_to:parseInt(b.value||'50',10),
     sec_per_hp:parseInt(($('#set_sec_hp')||{}).value||'60',10),
+    req_delay_lo:parseFloat(($('#set_delay_lo')||{}).value||'1.5'),
+    req_delay_hi:parseFloat(($('#set_delay_hi')||{}).value||'3.5'),
     regen_auto:!!($('#set_regen_auto')||{}).checked,
     auto_kazna:!!($('#set_auto_kazna')||{}).checked,
     auto_defense:!!($('#set_auto_defense')||{}).checked,
@@ -1504,6 +1514,7 @@ const GUIDE_SECTIONS=[
  ['🎛️','Набеги — Настройки боя',`
    <p><b>Воевать, пока HP выше</b> — если моё HP упало ниже, бот уходит лечиться. <b>Лечиться до HP</b> — до какого значения восстанавливаться.</p>
    <p><b>Реген: секунд на 1 HP</b> — скорость восстановления. Можно вписать вручную. Или включить <b>Авто-реген</b> — тогда бот сам считает по бонусам с Территории И <b>уточняет по факту</b> (замеряет реальное восстановление во время лечения). При левелапе пересчитает сам.</p>
+   <p><b>Пауза между действиями (от/до)</b> — сколько секунд бот выжидает между запросами к игре. Больше = человечнее и менее палевно (но медленнее). По умолчанию 1.5–3.5с. Хочешь совсем «как человек» — ставь 3–7. На лечении бот теперь спит почти до цели и перечитывает HP 1–2 раза, а не пять (меньше запросов).</p>
    <p><b>🏦 Авто-казна</b> — собирает доход и кладёт в депозит (реинвест). <b>🪙 Класть в казну и золото</b> — по умолчанию в казну идёт только серебро, золото остаётся свободным на оборону; включи, если хочешь копить и золото.</p>
    <p><b>🛡️ Авто-оборона</b> — держит ров и частокол активными + запас. Ров/частокол — расходники (блок 1 и 3 набега), бот перепроверяет их чаще и сразу после атаки на тебя.</p>
    <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
