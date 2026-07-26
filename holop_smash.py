@@ -1836,6 +1836,15 @@ class Smasher:
             self._bomb_log("  ⛔ нечем разминировать на экране (ни Огнива, ни Мастера)")
             return "no_use_button"
         await rsleep(1.0)
+        # ЧЁРНЫЙ ЯЩИК для живого теста бочки: что показала игра СРАЗУ после Огнива/Мастера
+        # (текст + кнопки). По этому дампу дошлифуем разминирование за один проход.
+        for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
+            if m.out:
+                continue
+            self._bomb_log(f"  🧨 после «{used}» экран: "
+                           + " ".join((m.message or "").split())[:180]
+                           + " || кнопки: " + " | ".join(bt for _, _, bt in self.flat_buttons(m)))
+            break
         # 1) быстрый скан: применение Огнива/Мастера могло СРАЗУ обезвредить (без мини-игры).
         #    Именно скан, НЕ _read_defuse_result — тот открывает Дружину и мог бы увести с
         #    экрана фитилей и дать ложный «defused».
