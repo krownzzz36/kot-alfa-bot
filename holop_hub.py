@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.26-17"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.26-18"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 PORT = int(os.environ.get("HOLOP_PORT", "8777"))
 
@@ -1032,14 +1032,15 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
  .sw input:checked + .track::after{transform:translateX(17px);background:#fff}
  .sw input:focus-visible + .track{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 32%,transparent)}
  .sw .lbl{flex:1}
- .console{animation:rise .42s .1s both;background:var(--panel);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}
+ .console{animation:rise .42s .1s both;background:var(--panel);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow);
+   position:sticky;top:18px;display:flex;flex-direction:column;max-height:calc(100vh - 36px)}
  .console-bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line2)}
  .live{display:inline-flex;align-items:center;gap:7px;font:700 10.5px var(--mono);letter-spacing:.2em;color:var(--green);
    padding:4px 10px;border-radius:99px;background:color-mix(in srgb,var(--green) 13%,transparent)}
  .live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);animation:blip 1.6s ease-in-out infinite}
  .console-name{font:12.5px var(--mono);color:var(--mut)}
  .console-meta{margin-left:auto;font:11px var(--mono);color:var(--faint)}
- pre.log{min-height:440px;max-height:calc(100vh - 340px);overflow:auto;background:transparent;
+ pre.log{flex:1 1 auto;min-height:260px;overflow:auto;background:transparent;
    border:0;border-radius:0;padding:18px 20px;margin:0;white-space:pre-wrap;word-break:break-word;
    font:13px/1.75 var(--mono);color:var(--ink)}
  button{font:600 13.5px var(--font);border:0;border-radius:12px;padding:11px 15px;cursor:pointer;color:#fff;
@@ -1083,7 +1084,8 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    .ver{display:none}
    main{padding:16px 14px 26px}
    .workspace{grid-template-columns:1fr}
-   pre.log{max-height:56vh;min-height:320px}
+   .console{position:static;max-height:none}   /* на телефоне не липкая — иначе съедает экран */
+   pre.log{max-height:56vh;min-height:320px;flex:none}
  }
  @media (max-width:430px){.brand-tx{font-size:15px}.btns button{min-width:0}}
  /* ── 🎮 БАРСКАЯ ИГРА ── */
