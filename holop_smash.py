@@ -156,7 +156,10 @@ async def rsleep(base, spread=0.35):
     первое, что видно со стороны игры. Везде, где раньше был фиксированный sleep."""
     lo, hi = base * (1.0 - spread), base * (1.0 + spread)
     await asyncio.sleep(random.uniform(max(0.05, lo), hi))
-DEFUSED_WORDS = ("обезврежена", "в безопасности", "правильный фитиль")
+# ⚠️ НЕ добавлять сюда «правильный фитиль»! Текст ВЗРЫВА — «Ты выбрал НЕправильный фитиль»
+# СОДЕРЖИТ подстроку «правильный фитиль» → взрыв ловился как обезврежено (ложный успех,
+# восстановление не запускалось). Успех определяем по «обезврежена»/«в безопасности».
+DEFUSED_WORDS = ("обезврежена", "в безопасности")
 EXPLODED_WORDS = ("взорвал", "взрыв", "неправильн", "не тот фитиль", "уничтож", "разрушен",
                   "территория взорвана")
 
@@ -1706,13 +1709,27 @@ class Smasher:
             await rsleep(0.5)
         return None
 
-    async def _refetch_until(self, mid, pred, tries=14):
+    async def _refetch_until(self, mid, pred, tries=20):
+        """Ждём, пока сообщение бочки (mid) удовлетворит pred. Читаем ДВА канала:
+        refetch(mid) (игра правит то же сообщение) и свежую ленту (вдруг экран пришёл
+        отдельным сообщением). Оба в try — видео-сообщение бочки иногда роняет чтение."""
         last = None
         for _ in range(tries):
-            m = await self.refetch(mid)
-            last = m or last
-            if m and pred(m):
-                return m
+            try:
+                m = await self.refetch(mid)
+                if m:
+                    last = m
+                    if pred(m):
+                        return m
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+            try:
+                for mm in sorted(await self.recent(5), key=lambda x: x.id, reverse=True):
+                    if not mm.out and pred(mm):
+                        return mm
+            except Exception:
+                pass
             await rsleep(0.5)
         return last
 
@@ -1777,17 +1794,33 @@ class Smasher:
         return await self._finish_bomb(mined.id)
 
     async def _finish_bomb(self, mid):
-        """Прочитать итог на сообщении бочки: обезврежено / взрыв → восстановление."""
+        """Прочитать итог на сообщении бочки: обезврежено / взрыв → восстановление.
+        ВЗРЫВ проверяем ПЕРВЫМ: текст взрыва «…НЕправильный фитиль» содержит подстроку
+        «правильный фитиль» — раньше это ловилось как успех (ложно). Читаем и само
+        сообщение (refetch), и свежую ленту — итог мог прийти отдельным сообщением."""
         res = "unknown"
-        for _ in range(14):
-            m = await self.refetch(mid)
-            low = (m.message or "").lower() if m else ""
-            if any(w in low for w in DEFUSED_WORDS):
-                res = "defused"
-                break
-            if any(w in low for w in EXPLODED_WORDS):
+        for _ in range(20):
+            texts = []
+            try:
+                m = await self.refetch(mid)
+                if m:
+                    texts.append((m.message or "").lower())
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+            try:
+                for mm in sorted(await self.recent(5), key=lambda x: x.id, reverse=True):
+                    if not mm.out:
+                        texts.append((mm.message or "").lower())
+            except Exception:
+                pass
+            joined = " ".join(texts)
+            if any(w in joined for w in EXPLODED_WORDS):    # ВЗРЫВ — ПЕРВЫМ (см. коммент)
                 res = "exploded"
-                self._bomb_log("  📋 экран взрыва: " + " ".join((m.message or "").split())[:200])
+                self._bomb_log("  📋 экран взрыва распознан.")
+                break
+            if any(w in joined for w in DEFUSED_WORDS):
+                res = "defused"
                 break
             await rsleep(0.5)
         if res == "defused":
@@ -1811,8 +1844,8 @@ class Smasher:
     async def _territory_exploded(self):
         await self.send("Территория")
         m = await self._wait_msg(lambda x: "ТЕРРИТОРИЯ" in (x.message or "").upper())
-        return bool(m and any(w in (m.message or "").lower() for w in ("взорвана", "замин."))
-                    ) or bool(m and "взорвана" in (m.message or "").lower())
+        low = (m.message or "").lower() if m else ""
+        return any(w in low for w in ("взорвана", "взорвано", "взрыв"))
 
     # ─────────── ВОССТАНОВЛЕНИЕ ПОСЛЕ ВЗРЫВА (самодостаточный процесс) ───────────
     async def recover_after_explosion(self):
