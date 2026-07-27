@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.26-20"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.27-21"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -325,6 +325,10 @@ MODULES = [
         "desc": "Авто-бой по списку + защита от бочки. Список правится на лету.",
     },
     {
+        "id": "guard", "title": "Защита от бочек", "emoji": "🛡️", "kind": "guard",
+        "desc": "Только сторожит и разминирует бочки — не фармит. После взрыва сам лечит и защищает.",
+    },
+    {
         "id": "roles", "title": "Роли холопов", "emoji": "🎭", "kind": "oneshot",
         "script": "holop_reroll.py", "log": "hub_roles.out",
         "desc": "Перегон холопа в нужную профессию (крутит выгнать→захватить).",
@@ -615,7 +619,8 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "pierce_defenses": True, "hit_shields": True, "bank_gold": False,
                            "auto_oboz": False, "war_mode": False, "human_mode": False,
                            "notify_dm": False, "free_hunt": False,
-                           "req_delay_lo": 1.5, "req_delay_hi": 3.5}
+                           "req_delay_lo": 1.5, "req_delay_hi": 3.5,
+                           "bomb_defense": True, "defense_only": False}
 
 
 def load_smash_settings():
@@ -655,6 +660,8 @@ def save_smash_settings(body):
         lo = max(0.2, min(float(body.get("req_delay_lo", cur["req_delay_lo"])), 20))
         hi = max(lo, min(float(body.get("req_delay_hi", cur["req_delay_hi"])), 20))
         out["req_delay_lo"], out["req_delay_hi"] = round(lo, 1), round(hi, 1)
+        out["bomb_defense"] = bool(body.get("bomb_defense", cur["bomb_defense"]))
+        out["defense_only"] = bool(body.get("defense_only", cur["defense_only"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -1302,11 +1309,25 @@ function render(mid){
   if(m.kind==='game'){ main.innerHTML=head+GAME.html(); GAME.start(); return; }
   if(m.kind==='guide'){ main.innerHTML=head+GUIDE_HTML; return; }
   let ctl='';
-  if(m.kind==='loop'){
+  if(m.kind==='guard'){
+    ctl=`<details class="acc" open>
+        <summary><span class="acc-ic">🛡️</span><span class="acc-t">Только защита от бочек</span><span class="chev"></span></summary>
+        <div class="acc-body">
+          <div class="note">Бот НЕ фармит — только сторожит бочку и разминирует (Огниво → красный фитиль). Если не угадал фитиль и рвануло — сам лечит территорию (100k🪙) и ставит охрану всем холопам, деньги берёт из казны, остаток возвращает. <b>Огниво держи в запасе (10–20 шт.)</b> — покупку бот не делает.</div>
+          <div class="grid2" style="margin-top:12px">
+            ${swHTML('set_defense_only','🛡️ Включить режим «только защита» (не фармить)')}
+          </div>
+          <div class="btns" style="margin-top:12px">
+            <button id="btnStart" class="b-green" onclick="startGuard()">▶ Запустить защиту</button>
+            <button id="btnStop" class="b-red" onclick="post('raids','stop')">⏹ Остановить</button></div>
+          <div class="note" id="gnote">Тот же бот, что и «Набеги». Включишь «только защиту» — он перестанет бить и будет лишь сторожить бочки.</div>
+        </div>
+      </details>`;
+  } else if(m.kind==='loop'){
     ctl=`<details class="acc" open>
         <summary><span class="acc-ic">🎮</span><span class="acc-t">Управление</span><span class="chev"></span></summary>
         <div class="acc-body">
-          <div class="btns"><button id="btnStart" class="b-green" onclick="post('${mid}','start')">▶ Запустить</button>
+          <div class="btns"><button id="btnStart" class="b-green" onclick="startRaids()">▶ Запустить</button>
             <button id="btnStop" class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
           <button id="nightBtn" class="b-night" style="margin-top:9px" onclick="toggleNight()">🌙 Ночной режим</button>
           <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
@@ -1346,6 +1367,7 @@ function render(mid){
             ${swHTML('set_pierce','🧱 Пробивать ров/частокол у целей (иначе — пропускать)')}
             ${swHTML('set_hit_shields','🏹 Сносить донат-щит требушетом и фармить (выкл — беречь требушеты)')}
             ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
+            ${swHTML('set_bomb_defense','💣 Защита от бочек (разминировать + восстановить после взрыва) — держать ВКЛ')}
             ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
             ${swHTML('set_human','🧑 Человеческий режим — иногда «отходить» на 8–30 мин (дополнение, не замена ночному фарму)')}
@@ -1392,11 +1414,18 @@ function render(mid){
       <span class="console-meta">новые снизу</span></div>
       <pre class="log" id="log">…</pre></section></div>`;
   if(m.kind==='loop'){ loadTargets(); loadDonate(); loadSettings(); }
+  if(m.kind==='guard'){ loadGuard(); }
+  pollId=(m.kind==='guard')?'raids':active;   // вкладка защиты сторожит тот же смашер «набеги»
   pollMod(); timer=setInterval(pollMod,1500);
 }
 let nightOn=false;
+let pollId='';
+async function startRaids(){ try{ await fetch('/api/raids/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({defense_only:false})}); }catch(e){} post('raids','start'); }
+async function saveGuard(){ const el=$('#set_defense_only'); try{ await fetch('/api/raids/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({defense_only:!!(el&&el.checked),bomb_defense:true})}); const n=$('#gnote'); if(n) n.textContent='Сохранено ✓ — меняется на лету.'; }catch(e){} }
+async function startGuard(){ const el=$('#set_defense_only'); if(el) el.checked=true; await saveGuard(); post('raids','start'); }
+async function loadGuard(){ try{ const d=await (await fetch('/api/raids/settings')).json(); const el=$('#set_defense_only'); if(el){ el.checked=!!d.defense_only; el.onchange=saveGuard; } }catch(e){} }
 async function pollMod(){
-  try{ const r=await fetch('/api/'+active+'/status'); const d=await r.json();
+  try{ const r=await fetch('/api/'+(pollId||active)+'/status'); const d=await r.json();
     const mp=$('#mpill'); if(mp) mp.innerHTML=pill(d.state); petState=d.state||'run';
     // кнопки реагируют на состояние: активная — цветом, неактивная — серым
     const on=(d.state==='run'||d.state==='pause');
@@ -1420,7 +1449,7 @@ async function loadResults(){
   const t=$('#results'); if(!t) return;
   // не перетираем поле, пока в нём выделяют/печатают — иначе слетает выделение
   if(document.activeElement===t) return;
-  try{ const txt=await (await fetch('/api/'+active+'/results')).text();
+  try{ const txt=await (await fetch('/api/'+(pollId||active)+'/results')).text();
     if(t.value!==txt) t.value=txt; }catch(e){}
 }
 function copyResults(){
@@ -1498,6 +1527,7 @@ async function loadSettings(){
     const hs=$('#set_hit_shields'); if(hs) hs.checked=!!d.hit_shields;
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
+    const bd=$('#set_bomb_defense'); if(bd) bd.checked=(d.bomb_defense!==false);
     const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
@@ -1520,6 +1550,7 @@ async function saveSettings(){
     hit_shields:!!($('#set_hit_shields')||{}).checked,
     bank_gold:!!($('#set_bank_gold')||{}).checked,
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
+    bomb_defense:!!($('#set_bomb_defense')||{}).checked,
     free_hunt:!!($('#set_free_hunt')||{}).checked,
     war_mode:!!($('#set_war')||{}).checked,
     human_mode:!!($('#set_human')||{}).checked,
@@ -1558,7 +1589,7 @@ const GUIDE_SECTIONS=[
    <p><b>🛡️ Авто-оборона</b> — держит ров и частокол активными + запас. Ров/частокол — расходники (блок 1 и 3 набега), бот перепроверяет их чаще и сразу после атаки на тебя.</p>
    <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
    <p><b>🐴 Авто-обоз</b> — покупает обоз «+50% серебра с набегов на 50 мин» за золото (собирает с холопов / из казны). Срок хранит в файле, лишний раз в магазин не лезет.</p>
-   <p><b>🎯 Свободная охота</b> — не по списку ников, а прямо с арены: бот листает соперников твоего уровня, отбирает атакуемых (клан, купол, новичков «ниже ур.» и тех, кто в КД — пропускает) и бьёт <b>слабейших по защите первыми</b> — их легче добить и реже блочат. Донат-цели и скамейку не трогает, ров/частокол — по галочке «Пробивать». Удобно, когда своего списка нет или хочется грести лут с самых мягких. Работает вместе с лечением, авто-казной, войной и человеческим режимом. Выключишь — вернётся к твоему списку целей.</p>
+   <p><b>💣 Защита от бочек</b> — пока бот работает и галочка включена, он сам следит за бочками (динамитом). Прилетела бочка → жмёт <b>Огниво</b>, потом <b>красный фитиль</b>. Угадал (шанс 1/3) — территория цела. Не угадал и рвануло — бот сам <b>лечит территорию</b> (100 000🪙 из казны) и <b>ставит охрану всем холопам</b> (10% золота из казны), лишнее возвращает в депозит. <b>Огниво держи в запасе (10–20 шт.)</b> — бот его не покупает, ⭐-варианты (Мастер, 25⭐) не трогает. Отдельная вкладка <b>«🛡️ Защита от бочек»</b> — режим «только сторожу, не фармлю»: включаешь и бот просто караулит бочки, ничего не атакуя.</p>
    <p><b>🔔 Слать мне в Избранное</b> — важные события (бочка/лечение) прилетают тебе личным сообщением в «Избранное» Telegram. Узнаёшь сразу, даже не открывая пульт. <b>По умолчанию выключено</b> — включи галочкой, если хочешь уведомления.</p>
    <p><b>🧑 Человеческий режим</b> — бот иногда «отходит» на 8–30 минут, чтобы активность не была машинно-ровной сутками (менее палевно). Это ДОПОЛНЕНИЕ, не замена — фармить продолжает, в том числе ночью. По умолчанию выключен.</p>
    <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],

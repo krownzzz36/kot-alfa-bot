@@ -146,6 +146,7 @@ STAR = "⭐"
 
 # ── бочка/динамит (тексты сняты из истории 13.07.2026) ──
 MINED_MARKER = "ЗАМИНИРОВАНА"                 # «⚠️ ТВОЯ ТЕРРИТОРИЯ ЗАМИНИРОВАНА!»
+BOMB_NOTIF = "ЗАМИНИРОВАН"                    # ловит и «ЗАМИНИРОВАНА», и «💣 ЗАМИНИРОВАНО!»
 BOMB_WARN = "скоро взорвётся"                 # поздний пуш «Бочка ... скоро взорвётся»
 ATTACK_MARKER = "НА ТЕБЯ НАПАЛИ"              # пуш о набеге на меня → ров/частокол могли сгореть
 
@@ -464,6 +465,9 @@ class Smasher:
         self._hit_shields = True      # сносить донат-щит требушетом и фармить дальше (True) или беречь требушеты и скипать (False)
         self._last_tl_warn = 0.0      # троттл лога про нераспознанные анимации @holop
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
+        self._bomb_done = set()       # id уже обработанных нотификаций бочки (не дублировать)
+        self._bomb_defense = True     # 🛡️ защищаться от бочек во время набегов (галочка, деф ВКЛ)
+        self._defense_only = False    # 🛡️ режим ТОЛЬКО защита от бочек: не фармим, только сторожим бочку
         # ВАЖНО: только ТЕПЕРЬ, когда все флаги проинициализированы, читаем настройки
         # из панели. Раньше вызов стоял ВЫШЕ и блок состояния затирал флаги обратно в
         # False — из-за этого на старте не работал авто-реген (реген оставался 1.0 м/HP).
@@ -559,6 +563,8 @@ class Smasher:
         self._bank_gold = bool(data.get("bank_gold", getattr(self, "_bank_gold", False)))  # класть ли золото в казну (деф нет — только серебро)
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
+        self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
+        self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
         was_hunt = getattr(self, "_free_hunt", False)
         self._free_hunt = bool(data.get("free_hunt", getattr(self, "_free_hunt", False)))
         if self._free_hunt and not was_hunt:
@@ -1670,318 +1676,302 @@ class Smasher:
         _, sv2 = await self.my_balance()
         return sv2 >= need
 
-    async def check_and_handle_bomb(self, force=False):
-        """Вернуть True, если бочка найдена и обработана (тогда обычный цикл пропускаем).
+    # ═══════════════ АВТОЗАЩИТА ОТ БОЧКИ (переписано по живому захвату 27.07) ═══════════════
+    # Ключевое: вся мини-игра идёт на ОДНОМ сообщении «💣 ЗАМИНИРОВАНО!» — бот РЕДАКТИРУЕТ
+    # его на месте. Действуем = жмём кнопки на ЭТОМ message_id (Огниво → красный фитиль).
+    # Клик по позиции (r,c), а не по тексту (текст с «—» ломает press). Красный НЕ гарантирован
+    # (33%) — на промах отдельный путь восстановления: лечение 100k серебра + защита всех за 10% золота.
+    def _btn_pos(self, m, sub, skip_star=True):
+        """(r,c,text) первой кнопки с подстрокой sub (без ⭐ если skip_star), иначе None."""
+        for r, c, bt in self.flat_buttons(m):
+            if sub in (bt or "").lower() and not (skip_star and STAR in (bt or "")):
+                return (r, c, bt)
+        return None
 
-        НЕ палимся: по умолчанию «Дружину» НЕ опрашиваем по таймеру — ловим бочку
-        по входящему пушу «скоро взорвётся». Один принудительный чек при старте (force),
-        и опрос по таймеру только если bomb_poll_interval > 0 (для ночного режима)."""
-        now = time.time()
-        push = False
-        try:
-            for m in await self.recent(15):   # шире окно: при частых набегах пуш быстро уходит вниз
-                if m.out:
-                    continue
-                t = m.message or ""
-                if BOMB_WARN in t or MINED_MARKER in t:
-                    push = True
-                    break
-        except Exception:
-            pass
-        if push and now >= self._bomb_alert_until:
-            self._bomb_log("💣💣💣 ВИЖУ БОЧКУ (пуш «скоро взорвётся»)! Иду разминировать — бросаю набеги.")
-        if push:
-            self._bomb_alert_until = now + 150   # тревога ~2.5 мин: долбим «Дружину», пока не разминируем
-        alert = now < self._bomb_alert_until
-        poll = int(self.s.get("bomb_poll_interval", 0) or 0)
-        due = poll > 0 and (now - self._last_bomb_check >= poll)
-        if not force and not push and not alert and not due:
-            return False   # обычный режим: пока нет пуша — «Дружину» не дёргаем (не палимся)
-        self._last_bomb_check = now
-        dr = await self.open_druzhina()
-        if not dr:
-            if alert:
-                self._bomb_log("  ⚠️ БОЧКА: не смог прочитать «Дружину» (сбой чтения) — повторю в след. цикле!")
+    def _has(self, m, sub):
+        return self._btn_pos(m, sub, skip_star=False) is not None
+
+    async def _click_sub(self, m, sub, label="", skip_star=True):
+        p = self._btn_pos(m, sub, skip_star=skip_star)
+        if not p:
             return False
-        if not self._is_mined(dr):
-            if alert:
-                self._bomb_log("  ✅ БОЧКА: мины на «Дружине» нет — уже разминирована или взорвалась.")
-                self._bomb_alert_until = 0.0
-            return False
-        await self.handle_bomb(dr)          # разминирование (логирует «💣💣💣 БОЧКА!»)
-        self._bomb_alert_until = 0.0        # разминировали — тревога снята
+        await self.click(m, p[0], p[1], label=label or p[2])   # клик по позиции — устойчив к «—»
         return True
 
-    async def handle_bomb(self, dr):
-        txt = dr.message or ""
-        who = re.search(r"Атаковал:\s*([^\n]+)", txt)
-        secs = parse_mine_seconds(txt)
+    async def _wait_msg(self, pred, tries=14):
+        for _ in range(tries):
+            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
+                if not m.out and pred(m):
+                    return m
+            await rsleep(0.5)
+        return None
+
+    async def _refetch_until(self, mid, pred, tries=14):
+        last = None
+        for _ in range(tries):
+            m = await self.refetch(mid)
+            last = m or last
+            if m and pred(m):
+                return m
+            await rsleep(0.5)
+        return last
+
+    async def check_and_handle_bomb(self, force=False):
+        """Найти нотификацию бочки «💣 ЗАМИНИРОВАНО!» (на ней кнопка «огниво») и обработать.
+        Вернуть True, если бочка найдена и обработана. Работает ВСЕГДА, пока включена защита."""
+        mined = None
+        try:
+            for m in sorted(await self.recent(25), key=lambda x: x.id, reverse=True):
+                if m.out or m.id in self._bomb_done:
+                    continue
+                t = (m.message or "").upper()
+                # триггер — кнопка «огниво» (она есть только на нотификации бочки),
+                # либо явный текст «ЗАМИНИРОВАН…»
+                if self._has(m, "огниво") or (BOMB_NOTIF in t and self.flat_buttons(m)):
+                    mined = m
+                    break
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            return False
+        if not mined:
+            return False
+        try:
+            await self.handle_bomb(mined)
+        finally:
+            self._bomb_done.add(mined.id)
+            if len(self._bomb_done) > 300:
+                self._bomb_done = set(sorted(self._bomb_done)[-150:])
+        self._bomb_alert_until = 0.0
+        return True
+
+    async def handle_bomb(self, mined):
+        """Разминировать бочку на её сообщении: Огниво → красный фитиль → итог.
+        Промах (33%) → восстановление. Огниво НЕ покупаем (Владимир держит запас вручную)."""
+        txt = mined.message or ""
+        who = re.search(r"[Нн]ападающ\w*:\s*([^\n]+)", txt) or re.search(r"Атаковал:\s*([^\n]+)", txt)
+        who_s = who.group(1).strip() if who else "?"
         self.stats["bombs"] += 1
-        self._bomb_log("💣💣💣 БОЧКА! Заминировал: {} | осталось {} — РАЗМИНИРОВАНИЕ".format(
-            who.group(1).strip() if who else "?", fmt_secs(secs) if secs else "?"))
-        await self.notify_me("💣 На тебя заложили бочку ({}, осталось {}). Разминирую Огнивом."
-                             .format(who.group(1).strip() if who else "?",
-                                     fmt_secs(secs) if secs else "?"), key="bomb", throttle=600)
-        sp = {"gold": 0, "silver": 0}
-        if not await self.ensure_ognivo(sp):
-            self._bomb_log("  ⛔ нечем разминировать (Огниво/золото) — бочка может взорваться!")
-            return
-        outcome = await self.use_ognivo_red()
-        if outcome == "defused":
+        self._bomb_log("💣💣💣 БОЧКА! Нападающий: {} — РАЗМИНИРОВАНИЕ. Кнопки: {}".format(
+            who_s, " | ".join(bt for _, _, bt in self.flat_buttons(mined))))
+        await self.notify_me(f"💣 На тебя заложили бочку ({who_s}). Разминирую (Огниво → красный фитиль).",
+                             key="bomb", throttle=300)
+        # 1) ОГНИВО — по подстроке, клик по позиции. Нет кнопки → Огниво кончилось: НЕ покупаем.
+        if not await self._click_sub(mined, "огниво", label="Огниво"):
+            self._bomb_log("  ⛔ на нотификации нет кнопки «Огниво» — запас кончился. Не покупаю "
+                           "(держи Огниво вручную). Жду итог, при взрыве — восстановлю.")
+            return await self._finish_bomb(mined.id)
+        await rsleep(1.0)
+        # 2) ВЫБОР ФИТИЛЯ на ТОМ ЖЕ сообщении → красный (простой текст «Красный фитиль», без 🔴)
+        fuse = await self._refetch_until(mined.id, lambda m: self._has(m, "фитил") or self._has(m, "красн"))
+        if fuse and (self._has(fuse, "фитил") or self._has(fuse, "красн")):
+            self._bomb_log("  🎲 фитили: " + " | ".join(bt for _, _, bt in self.flat_buttons(fuse)))
+            if not await self._click_sub(fuse, "красн", label="Красный фитиль"):
+                self._bomb_log("  ⚠️ кнопки «красный фитиль» нет — сырые: "
+                               + " | ".join(bt for _, _, bt in self.flat_buttons(fuse)))
+        else:
+            cur = await self.refetch(mined.id)
+            self._bomb_log("  ⚠️ экран фитилей не пришёл. Текущий: "
+                           + (" ".join((cur.message or "").split())[:160] if cur else "(нет)"))
+        await rsleep(1.0)
+        return await self._finish_bomb(mined.id)
+
+    async def _finish_bomb(self, mid):
+        """Прочитать итог на сообщении бочки: обезврежено / взрыв → восстановление."""
+        res = "unknown"
+        for _ in range(14):
+            m = await self.refetch(mid)
+            low = (m.message or "").lower() if m else ""
+            if any(w in low for w in DEFUSED_WORDS):
+                res = "defused"
+                break
+            if any(w in low for w in EXPLODED_WORDS):
+                res = "exploded"
+                self._bomb_log("  📋 экран взрыва: " + " ".join((m.message or "").split())[:200])
+                break
+            await rsleep(0.5)
+        if res == "defused":
             self.stats["defused"] += 1
             self._bomb_log("  ✅ БОЧКА ОБЕЗВРЕЖЕНА — территория цела.")
+            await self.notify_me("✅ Бочку разминировал — территория цела.", key="bombok", throttle=1)
             return
-        if outcome == "exploded":
+        if res == "exploded":
             self.stats["exploded"] += 1
-            self._bomb_log("  💥 ВЗРЫВ (фитиль не тот) — восстанавливаю территорию и холопов.")
-            await self.notify_me("💥 БОЧКА ВЗОРВАЛАСЬ на твоей территории — восстанавливаю "
-                                 "территорию и холопов. Загляни, проверь потери.", key="bomb")
-            await self.recover_after_explosion(sp)
+            self._bomb_log("  💥 ВЗРЫВ (красный не тот — рандом 33%). Восстанавливаю территорию и холопов.")
+            await self.notify_me("💥 Бочка взорвалась (не угадал фитиль). Лечу территорию и защищаю "
+                                 "холопов из казны.", key="boom", throttle=1)
+            await self.recover_after_explosion()
             return
-        log(f"  ⁇ разминирование: непонятный исход «{outcome}» — проверь лог сырых экранов выше")
+        # итог не распознан — перестрахуемся: если территория взорвана, восстановим
+        self._bomb_log("  ⁇ итог бочки не распознан — проверяю, не взорвана ли территория.")
+        if await self._territory_exploded():
+            self.stats["exploded"] += 1
+            await self.recover_after_explosion()
 
-    async def ensure_ognivo(self, sp):
-        s = self.s
-        dr = await self.open_druzhina()
-        if not dr:
+    async def _territory_exploded(self):
+        await self.send("Территория")
+        m = await self._wait_msg(lambda x: "ТЕРРИТОРИЯ" in (x.message or "").upper())
+        return bool(m and any(w in (m.message or "").lower() for w in ("взорвана", "замин."))
+                    ) or bool(m and "взорвана" in (m.message or "").lower())
+
+    # ─────────── ВОССТАНОВЛЕНИЕ ПОСЛЕ ВЗРЫВА (самодостаточный процесс) ───────────
+    async def recover_after_explosion(self):
+        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙) → защищаю всех холопов "
+                       "(10% золота) → возвращаю остаток в депозит.")
+        ok_heal = await self.heal_territory()
+        ok_prot = await self.protect_all_holops()
+        await self.return_free_to_deposit()
+        self._bomb_log("  🏁 Восстановление завершено — лечение: {}, защита: {}.".format(
+            "ок" if ok_heal else "НЕ ок", "ок" if ok_prot else "НЕ ок"))
+        await self.notify_me("🛠️ После взрыва: территория {}, холопы {}. Свободный остаток вернул в казну."
+                             .format("вылечена" if ok_heal else "НЕ вылечена ⚠️",
+                                     "защищены" if ok_prot else "НЕ защищены ⚠️"), key="recov", throttle=1)
+
+    async def _withdraw_silver_100k(self):
+        """Снять из казны 100 000 серебра. Два вида: АВАРИЙНЫЙ (при взрыве: «Снять с депозита»
+        → «Снять 100.0K») и ОБЫЧНЫЙ (Серебро → Снять → Ввести сумму → 100000)."""
+        await self.send("Личная казна")
+        km = await self._wait_msg(lambda m: ("казна" in (m.message or "").lower()
+                                             or "депозит" in (m.message or "").lower()
+                                             or "взорвана" in (m.message or "").lower())
+                                             and self.flat_buttons(m))
+        if not km:
+            self._bomb_log("  ⚠️ казна не открылась (серебро)")
             return False
-        have = parse_ognivo_count(dr.message or "")
-        if have == 0:
-            for _, _, bt in self.flat_buttons(dr):
-                m = re.search(r"огниво\s*x\s*(\d+)", (bt or "").lower())
-                if m:
-                    have = int(m.group(1))
-                    break
-        if have >= 1:
-            return True
-        cost = s["ognivo_cost"]
-        if sp["gold"] + cost > s["bomb_max_gold"]:
-            log("  ⛔ лимит золота на инцидент — Огниво не покупаю")
-            return False
-        if not await self.ensure_gold(cost):
-            log("  ⛔ не хватает золота на Огниво даже после казны")
-            return False
-        dr = await self.open_druzhina()
-        if not dr:
-            return False
-        for r, c, bt in self.flat_buttons(dr):
-            low = (bt or "").lower()
-            if "огниво" in low and "🏅" in (bt or "") and STAR not in (bt or "") \
-                    and not re.search(r"огниво\s*x", low):
-                await self.click(dr, r, c, label=bt)
-                sp["gold"] += cost
-                self.stats["spent_gold"] += cost
-                log(f"  🛒 Куплено Огниво за {cost}🏅")
-                await rsleep(0.8)
+        # АВАРИЙНЫЙ вид (взрыв): «Снять с депозита (…🪙)»
+        if await self._click_sub(km, "снять с депозита", label="Снять с депозита (аварийно)"):
+            step = await self._wait_msg(lambda m: any(("снять" in (bt or "").lower() and "100" in (bt or ""))
+                                                      for _, _, bt in self.flat_buttons(m)))
+            if step and await self._click_sub(step, "100", label="Снять 100.0K🪙"):
+                await rsleep(1.0)
+                self._bomb_log("  🏦 Снял 100k серебра (аварийный вид).")
                 return True
-        log("  ⚠️ не нашёл кнопку покупки «Огниво 900🏅»")
+            self._bomb_log("  ⚠️ аварийно: кнопки «Снять 100.0K» нет. Сырые: "
+                           + (" | ".join(bt for _, _, bt in self.flat_buttons(step)) if step else "(нет)"))
+        # ОБЫЧНЫЙ вид: Серебро (10%/день) → Снять → Ввести сумму → 100000
+        await self.send("Личная казна")
+        km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
+        if km and await self._click_sub(km, "серебро", label="Серебро (10%/день)"):
+            snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
+            if snyat and await self._click_sub(snyat, "снять", label="Снять"):
+                vv = await self._wait_msg(lambda m: self._has(m, "ввести сумму"))
+                if vv and await self._click_sub(vv, "ввести сумму", label="Ввести сумму"):
+                    await rsleep(0.6)
+                    await self.send("100000")
+                    await rsleep(1.2)
+                    self._bomb_log("  🏦 Снял 100000 серебра (обычный вид).")
+                    return True
+        self._bomb_log("  ⚠️ не смог снять серебро на лечение (проверь казну).")
         return False
 
-    async def _read_defuse_result(self):
-        for _ in range(14):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if m.out:
-                    continue
-                low = (m.message or "").lower()
-                if any(w in low for w in DEFUSED_WORDS):
-                    return "defused"
-                if any(w in low for w in EXPLODED_WORDS):
-                    log("  📋 сырой ответ (взрыв): " + " ".join((m.message or "").split())[:200])
-                    return "exploded"
-            await rsleep(0.5)
-        dr = await self.open_druzhina()
-        if dr and MINED_MARKER not in (dr.message or ""):
-            return "defused"      # мины больше нет и явного взрыва не видели → считаем обезврежено
-        return "unknown"
-
-    # предметы/действия Дружины — их НИКОГДА не путать с фитилём (иначе бот резал
-    # «ПОДЛОЖИТЬ БОЧКУ» = сам подкладывал бочку и она взрывалась). Реальная бочка
-    # 26.07 взорвалась именно из-за этого.
-    _NOT_FUSE = ("подложить", "бочк", "огниво", "зелье", "требушет", "обоз", "мастер",
-                 "магазин", "эликсир", "порох", "дьяв", "назад", "отмена", "закрыть", "купить")
-    _FUSE_COLORS = ("🔴", "🟢", "🔵", "🟡", "🟠", "🟣", "⚪", "⚫", "🟤")
-
-    def _is_fuse_button(self, bt):
-        """Кнопка — это ФИТИЛЬ мини-игры (а не предмет/действие Дружины)?
-        Признак: слово «фитиль» ИЛИ цветной кружок, и НЕ предмет из чёрного списка."""
-        low = (bt or "").lower()
-        if not bt or any(w in low for w in self._NOT_FUSE):
-            return False
-        return "фитил" in low or any(ic in bt for ic in self._FUSE_COLORS)
-
-    def _is_red_fuse(self, bt):
-        return self._is_fuse_button(bt) and (self.s["bomb_fuse"] in (bt or "").lower() or "🔴" in (bt or ""))
-
-    async def use_ognivo_red(self):
-        dr = await self.open_druzhina()
-        if not dr:
-            return "noscreen"
-        # ПОЛНЫЙ дамп экрана — чтобы при живой бочке видеть точную раскладку и дошлифовать
-        self._bomb_log("  🧨 экран Дружины/бочки: "
-                       + " | ".join(bt for _, _, bt in self.flat_buttons(dr)))
-        used = None
-        for r, c, bt in self.flat_buttons(dr):
-            if re.search(r"огниво\s*x\s*\d", (bt or "").lower()):
-                await self.click(dr, r, c, label=bt)
-                used = "огниво"
-                break
-        if not used:   # игра: «используй огниво ИЛИ мастера» — пробуем Мастера (не за ⭐)
-            for r, c, bt in self.flat_buttons(dr):
-                if "мастер" in (bt or "").lower() and STAR not in (bt or ""):
-                    await self.click(dr, r, c, label=bt)
-                    used = "мастер"
-                    self._bomb_log("  🧨 Огнива нет — жму «Мастер»")
-                    break
-        if not used:
-            self._bomb_log("  ⛔ нечем разминировать на экране (ни Огнива, ни Мастера)")
-            return "no_use_button"
-        await rsleep(1.0)
-        # ЧЁРНЫЙ ЯЩИК для живого теста бочки: что показала игра СРАЗУ после Огнива/Мастера
-        # (текст + кнопки). По этому дампу дошлифуем разминирование за один проход.
-        for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
-            if m.out:
-                continue
-            self._bomb_log(f"  🧨 после «{used}» экран: "
-                           + " ".join((m.message or "").split())[:180]
-                           + " || кнопки: " + " | ".join(bt for _, _, bt in self.flat_buttons(m)))
-            break
-        # 1) быстрый скан: применение Огнива/Мастера могло СРАЗУ обезвредить (без мини-игры).
-        #    Именно скан, НЕ _read_defuse_result — тот открывает Дружину и мог бы увести с
-        #    экрана фитилей и дать ложный «defused».
-        for _ in range(4):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if m.out:
-                    continue
-                low = (m.message or "").lower()
-                if any(w in low for w in DEFUSED_WORDS):
-                    self._bomb_log("  ✅ БОЧКА ОБЕЗВРЕЖЕНА сразу применением Огнива/Мастера.")
-                    return "defused"
-                if any(w in low for w in EXPLODED_WORDS):
-                    return "exploded"
-            await rsleep(0.4)
-        # 2) ищем НАСТОЯЩИЙ экран фитилей — по цветным кнопкам, НЕ по слову в тексте
-        fuse = None
-        for _ in range(12):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if m.out:
-                    continue
-                if any(self._is_fuse_button(bt) for _, _, bt in self.flat_buttons(m)):
-                    fuse = m
-                    break
-            if fuse:
-                break
-            await rsleep(0.5)
-        if not fuse:
-            # НЕ режем ничего наугад (раньше резали «ПОДЛОЖИТЬ БОЧКУ» — катастрофа).
-            self._bomb_log("  ⚠️ экран фитилей не появился — НЕ режу наугад. Скорее всего "
-                           "Огниво/Мастер уже разминировали; перечитываю итог.")
-            return await self._read_defuse_result()
-        self._bomb_log("  🎲 экран фитилей: "
-                       + " | ".join(bt for _, _, bt in self.flat_buttons(fuse)))
-        # режем красный (bomb_fuse); если красного нет — первый НАСТОЯЩИЙ фитиль (не предмет)
-        for r, c, bt in self.flat_buttons(fuse):
-            if self._is_red_fuse(bt):
-                await self.click(fuse, r, c, label=bt)
-                await rsleep(1.0)
-                return await self._read_defuse_result()
-        for r, c, bt in self.flat_buttons(fuse):
-            if self._is_fuse_button(bt):
-                await self.click(fuse, r, c, label=bt)
-                self._bomb_log(f"  ⚠️ красного фитиля нет — режу фитиль «{bt}»")
-                await rsleep(1.0)
-                return await self._read_defuse_result()
-        return "no_fuse_button"
-
-    async def recover_after_explosion(self, sp):
-        await self.heal_territory(sp)
-        await self.protect_holops(sp)
-        log("  🏁 Восстановление после взрыва завершено — возвращаюсь к набегам.")
-
-    async def heal_territory(self, sp):
-        s = self.s
-        cost = s["heal_cost"]
-        if sp["silver"] + cost > s["bomb_max_silver"]:
-            log("  ⛔ лимит серебра — лечение территории пропускаю")
-            return
-        await self.ensure_silver(cost)
+    async def heal_territory(self):
+        """Лечение территории за 100 000 серебра: снять из казны → нажать «100.0K🪙»."""
+        await self._withdraw_silver_100k()
         await self.send("Территория")
-        tmsg = None
-        for _ in range(12):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if not m.out and "ТЕРРИТОРИЯ" in (m.message or "") and self.flat_buttons(m):
-                    tmsg = m
-                    break
-            if tmsg:
-                break
-            await rsleep(0.5)
+        tmsg = await self._wait_msg(lambda m: "ТЕРРИТОРИЯ" in (m.message or "").upper() and self.flat_buttons(m))
         if not tmsg:
-            log("  ⚠️ территория не открылась для лечения")
-            return
+            self._bomb_log("  ⚠️ территория не открылась для лечения")
+            return False
+        # кнопка лечения = «100.0K🪙» (серебро, без ⭐). Ищем 🪙+«100», либо «восстанов»/«лечи».
         heal = None
         for r, c, bt in self.flat_buttons(tmsg):
             low = (bt or "").lower()
-            if ("лечи" in low or "восстанов" in low or "100" in (bt or "")) and STAR not in (bt or ""):
+            if STAR in (bt or ""):
+                continue
+            if ("🪙" in (bt or "") and "100" in (bt or "")) or "восстанов" in low or "лечи" in low:
                 heal = (r, c, bt)
                 break
         if not heal:
-            log("  ⚠️ кнопку лечения территории не нашёл. Сырые кнопки: "
-                + " | ".join(bt for _, _, bt in self.flat_buttons(tmsg)))
-            return
+            self._bomb_log("  ⚠️ кнопки лечения «100.0K🪙» нет. Сырые: "
+                           + " | ".join(bt for _, _, bt in self.flat_buttons(tmsg)))
+            return False
         await self.click(tmsg, heal[0], heal[1], label=heal[2])
-        sp["silver"] += cost
-        self.stats["spent_silver"] += cost
-        log(f"  ❤️ Территория вылечена (кнопка «{heal[2]}»).")
+        await rsleep(1.2)
+        for _ in range(8):
+            for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
+                if not m.out and "восстановлен" in (m.message or "").lower():
+                    self.stats["spent_silver"] += 100000
+                    self._bomb_log("  ❤️ Территория восстановлена (−100000🪙).")
+                    return True
+            await rsleep(0.5)
+        self._bomb_log(f"  ❤️ Лечение нажал («{heal[2]}») — подтверждения не увидел, проверь территорию.")
+        return True
 
-    async def protect_holops(self, sp):
-        s = self.s
+    async def _withdraw_gold_10pct(self):
+        """Снять 10% золота из казны (обычный вид): Золото (5%/день) → Снять → 10%."""
+        await self.send("Личная казна")
+        km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
+        if not km or not await self._click_sub(km, "золото", label="Золото (5%/день)"):
+            self._bomb_log("  ⚠️ казна: не открыл раздел «Золото»")
+            return False
+        snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
+        if not (snyat and await self._click_sub(snyat, "снять", label="Снять")):
+            return False
+        pct = await self._wait_msg(lambda m: self._has(m, "10%"))
+        if pct and await self._click_sub(pct, "10%", label="10% золота"):
+            await rsleep(1.0)
+            self._bomb_log("  🏦 Снял 10% золота из казны на защиту холопов.")
+            return True
+        self._bomb_log("  ⚠️ не нашёл кнопку «10%» на снятии золота.")
+        return False
+
+    async def _press_protect_all(self):
+        """Холопы → Холопы(N) → «Защитить всех (N) за N×120 золота». True если подтвердилось."""
         await self.send("Холопы")
-        hub = None
-        for _ in range(12):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if not m.out and any("холопы (" in (bt or "").lower()
-                                     for _, _, bt in self.flat_buttons(m)):
-                    hub = m
-                    break
-            if hub:
-                break
-            await rsleep(0.5)
-        if not hub or not await self.click_text(hub, "Холопы (", label="список холопов"):
-            log("  ⚠️ не открыл список холопов для защиты")
-            return
+        hub = await self._wait_msg(lambda m: self._has(m, "холопы ("))
+        if not (hub and await self._click_sub(hub, "холопы (", label="список холопов")):
+            self._bomb_log("  ⚠️ не открыл список холопов")
+            return False
         await rsleep(0.8)
-        lst = None
-        for _ in range(12):
-            for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
-                if not m.out and "холоп" in (m.message or "").lower() and self.flat_buttons(m):
-                    lst = m
-                    break
-            if lst:
-                break
-            await rsleep(0.5)
+        lst = await self._wait_msg(lambda m: self._has(m, "защитить всех"))
         if not lst:
-            log("  ⚠️ список холопов не открылся")
-            return
-        prot = None
-        for r, c, bt in self.flat_buttons(lst):
-            low = (bt or "").lower()
-            if (("защитить всех" in low) or ("охрана всем" in low)
-                    or ("охран" in low and "всех" in low)) and STAR not in (bt or ""):
-                prot = (r, c, bt)
-                break
-        if not prot:
-            log("  ⚠️ кнопки «Защитить всех» за золото нет (охрана могла уцелеть). Сырые кнопки: "
-                + " | ".join(bt for _, _, bt in self.flat_buttons(lst)))
-            return
-        cost = parse_amount(prot[2])
-        if cost and sp["gold"] + cost > s["bomb_max_gold"]:
-            log(f"  ⛔ защита всех стоит {cost}🏅 — превышает лимит инцидента, пропускаю")
-            return
-        if cost:
-            await self.ensure_gold(cost)
-        await self.click(lst, prot[0], prot[1], label=prot[2])
-        sp["gold"] += cost
-        self.stats["spent_gold"] += cost
-        log(f"  🛡️ Холопы защищены (кнопка «{prot[2]}»).")
+            self._bomb_log("  ⚠️ кнопки «Защитить всех» нет (охрана цела?).")
+            return False
+        p = self._btn_pos(lst, "защитить всех", skip_star=True)
+        if not p:
+            return False
+        cost = parse_amount(p[2])
+        await self.click(lst, p[0], p[1], label=p[2])
+        await rsleep(1.2)
+        for _ in range(8):
+            for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
+                if not m.out and "защита установлена" in (m.message or "").lower():
+                    if cost:
+                        self.stats["spent_gold"] += cost
+                    self._bomb_log(f"  🛡️ Защита установлена на холопов ({p[2]}).")
+                    return True
+            await rsleep(0.5)
+        self._bomb_log(f"  ⚠️ «Защитить всех» нажал ({p[2]}) — подтверждения нет, вероятно мало золота.")
+        return False
+
+    async def protect_all_holops(self):
+        """Защитить всех холопов: снять 10% золота → «Защитить всех». Не хватило → ещё 10% и повтор."""
+        await self._withdraw_gold_10pct()
+        if await self._press_protect_all():
+            return True
+        self._bomb_log("  ↻ не хватило золота — снимаю ещё 10% и повторяю защиту.")
+        await self._withdraw_gold_10pct()
+        return await self._press_protect_all()
+
+    async def return_free_to_deposit(self):
+        """Вернуть весь свободный остаток в депозит: Серебро/Золото → Депозит → Положить всё."""
+        for kind in ("серебро", "золото"):
+            try:
+                await self.send("Личная казна")
+                km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
+                if not km or not await self._click_sub(km, kind, label=f"{kind} (возврат)"):
+                    continue
+                dep = await self._wait_msg(lambda m: self._has(m, "депозит"))
+                if not (dep and await self._click_sub(dep, "депозит", label="Депозит")):
+                    continue
+                put = await self._wait_msg(lambda m: self._has(m, "положить"))
+                if put and await self._click_sub(put, "положить", label="Положить всё"):
+                    await rsleep(1.0)
+                    self._bomb_log(f"  🏦 Вернул свободное {kind} в депозит.")
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                self._bomb_log(f"  ⚠️ возврат {kind} в казну сорвался: {type(e).__name__}")
 
     def heartbeat(self):
         now = time.time()
@@ -2145,14 +2135,18 @@ class Smasher:
         self.apply_live_settings()   # подхватываем настройки боя из панели на лету
         s = self.s
         self.heartbeat()
-        # 💣 ПРИОРИТЕТ №1: проверка на бочку (динамит). Важнее набегов и лечения.
-        try:
-            if await self.check_and_handle_bomb():
-                return None
-        except Exception as e:
-            if _is_dead_session(e):
-                raise   # мёртвую сессию обрабатывает главный цикл (остановка)
-            log(f"  ⚠️ сбой в проверке бочки: {type(e).__name__}: {e}")
+        # 💣 ПРИОРИТЕТ №1: защита от бочки (если включена галочкой). Важнее набегов и лечения.
+        if self._bomb_defense or self._defense_only:
+            try:
+                if await self.check_and_handle_bomb():
+                    return None
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise   # мёртвую сессию обрабатывает главный цикл (остановка)
+                log(f"  ⚠️ сбой в проверке бочки: {type(e).__name__}: {e}")
+        # 🛡️ РЕЖИМ «ТОЛЬКО ЗАЩИТА ОТ БОЧЕК»: не фармим — просто сторожим бочку короткими циклами.
+        if self._defense_only:
+            return await self.sleep_gated(random.uniform(20, 40))
         # 🏦 АВТО-КАЗНА по таймеру (раз в ~час ± рандом)
         if self._auto_kazna and self._next_bank and time.time() >= self._next_bank:
             try:
