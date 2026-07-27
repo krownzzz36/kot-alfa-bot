@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.27-24"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.27-25"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -1802,12 +1802,17 @@ async function init(){
   var roaming=false;
   function roam(){
     if(roaming||!runCtx) return; roaming=true; runCv.style.display='block';
-    var w=window.innerWidth, x=-110, rt=0;
+    var w=window.innerWidth, rt=0;
+    var dir=Math.random()<0.5?1:-1;               // 1=вправо, -1=влево (Максим: чтоб не только направо)
+    var x=dir===1?-110:(w+40);
     (function step(){
-      x+=6; runCv.style.left=x+'px';
+      x+=6*dir; runCv.style.left=x+'px';
+      if(dir===-1){ runCtx.save(); runCtx.translate(runCv.width,0); runCtx.scale(-1,1); }  // зеркалим спрайт
       drawScene(runCtx, runCv.width, {id:'',working:true,sleeping:false,event:null,t:rt,jump:0,roam:true});
+      if(dir===-1){ runCtx.restore(); }
       rt++;
-      if(x<w+40) requestAnimationFrame(step);
+      var done=dir===1?(x>=w+40):(x<=-110);
+      if(!done) requestAnimationFrame(step);
       else { roaming=false; runCv.style.display='none'; }
     })();
   }

@@ -241,14 +241,23 @@ ABSORB_WORDS = ("частокол", "поглотил", "выдержал", "з�
 DONATE_RE = re.compile(r"железн\w*\s+купол|требушет\w*\s+остал", re.IGNORECASE)
 
 
-def _is_dead_session(e):
-    """Сессия убита Telegram (ключ отозван / используется в двух местах) — retry бесполезен."""
+def _is_duplicate_ip(e):
+    """Сессия закрыта из-за ДВУХ IP разом (VPN сменил IP/страну на ходу). ЧАСТО транзиентно —
+    после переподключения с одного IP снова работает. НЕ убивать бота сразу (боль Ксюши)."""
     n = type(e).__name__.lower()
     s = str(e).lower()
-    return ("authkeyduplicated" in n or "authkeyunregistered" in n
+    return "authkeyduplicated" in n or "two different ip" in s
+
+
+def _is_dead_session(e):
+    """Сессия убита Telegram (ключ отозван / дубль IP) — во ВНУТРЕННИХ обработчиках
+    пробрасываем наверх. В главном цикле дубль-IP ловится ОТДЕЛЬНО (переподключение),
+    а по-настоящему мёртвая (ключ отозван) — остановка."""
+    n = type(e).__name__.lower()
+    s = str(e).lower()
+    return (_is_duplicate_ip(e) or "authkeyunregistered" in n
             or "sessionrevoked" in n or "sessionexpired" in n
-            or "userdeactivated" in n or "authorization key" in s
-            or "two different ip" in s)
+            or "userdeactivated" in n or "authorization key" in s)
 
 
 def parse_shop_gold(text):
@@ -445,6 +454,9 @@ class Smasher:
         self._healing = False    # режим лечения: не атакуем, перечитываем реальное HP
         self._regen_bonus = 0.0   # сумма бонусов регена с Территории (%), обновляется при чтении
         self._heal_start = 0.0   # когда ушли на лечение (для аварийного потолка)
+        self._heal_from_hp = 0    # HP на момент последнего РЕАЛЬНОГО чтения при лечении
+        self._heal_from_t = 0.0   # когда это чтение было (для оценки HP без запроса)
+        self._last_hp_read = 0.0  # когда последний раз слали «Территория» ради HP (анти-спам)
         self._last_raw = ""            # сырой текст последнего ответа набега
         self._last_rep_penalty = 0.0   # < 0, если за последнюю атаку списали репутацию
         self._last_bomb_check = 0.0   # когда последний раз опрашивали «Дружину» на бочку
@@ -1479,8 +1491,12 @@ class Smasher:
                 hp = my_after if isinstance(my_after, int) else 0
                 self._healing = True
                 self._heal_start = time.time()
+                # засев оценки HP: если знаем hp — с него, иначе форсим чтение (t=0)
+                self._heal_from_hp = hp if isinstance(my_after, int) else 0
+                self._heal_from_t = time.time() if isinstance(my_after, int) else 0.0
+                self._last_hp_read = time.time() if isinstance(my_after, int) else 0.0
                 log(f"🩸 Игра: HP {hp} < {s['my_min_hp']} — мало для атаки. Ухожу на лечение "
-                    f"до {s['my_recover_to']} (перечитываю HP ~каждые {s['heal_recheck']}с).")
+                    f"до {s['my_recover_to']}.")
                 return hp
             # ПОРАЖЕНИЕ — снимаем цель с ротации до распоряжения (чтобы не сливать HP)
             if outcome == "loss":
@@ -2132,15 +2148,37 @@ class Smasher:
             try:
                 if await self._one_cycle() == "stop":
                     break
+                self._dup_strikes = 0   # цикл прошёл успешно — счётчик дубль-IP обнуляем
                 self._save_cd_cache()   # КД целей → в файл (переживёт перезапуск, не долбит после старта)
                 if await self._maybe_human_break() == "stop":
                     break
             except Exception as e:
+                # ДУБЛЬ-IP (VPN сменил IP на ходу) — НЕ умираем, а переподключаемся.
+                # Часто транзиентно; раньше бот тут просто вставал (боль Ксюши).
+                if _is_duplicate_ip(e):
+                    self._dup_strikes = getattr(self, "_dup_strikes", 0) + 1
+                    if self._dup_strikes <= 6:
+                        wait = min(10 * self._dup_strikes, 60)
+                        log(f"⚠️ Сессия дёрнулась с двух IP (VPN сменил IP?). Переподключаюсь "
+                            f"({self._dup_strikes}/6) через {wait}с — НЕ останавливаюсь.")
+                        try:
+                            await self.c.disconnect()
+                        except Exception:
+                            pass
+                        await asyncio.sleep(wait)
+                        try:
+                            await self.c.connect()
+                        except Exception:
+                            pass
+                        if await self.sleep_gated(2) == "stop":
+                            break
+                        continue
+                    log("🛑 Сессия рвётся с двух IP слишком часто (6 раз подряд). Зафиксируй "
+                        "ОДНУ страну VPN и, если не поможет, войди заново («Сменить аккаунт»). Останавливаюсь.")
+                    break
                 if _is_dead_session(e):
-                    log("🛑 СЕССИЯ БОЛЬШЕ НЕ РАБОТАЕТ — Telegram отозвал ключ (сессия "
-                        "использована с ДВУХ IP сразу). Причины: (1) VPN меняет страну/IP "
-                        "на ходу — зафиксируй ОДНУ страну; (2) бот запущен дважды. "
-                        "Надо войти заново (переавторизоваться). Останавливаюсь.")
+                    log("🛑 СЕССИЯ БОЛЬШЕ НЕ РАБОТАЕТ — Telegram отозвал ключ. Надо войти "
+                        "заново («Сменить аккаунт»). Останавливаюсь.")
                     break
                 log(f"  ⚠️ сбой в цикле: {type(e).__name__}: {e} — продолжаю через 15с")
                 try:
@@ -2235,32 +2273,38 @@ class Smasher:
         # РЕЖИМ ЛЕЧЕНИЯ: не атакуем, но КАЖДЫЙ РАЗ читаем реальное HP (Территория).
         # Просыпаемся сразу, как только HP дорос до recover_to (в т.ч. после эликсира).
         if self._healing:
-            hp = await self.my_current_hp()
-            cap = (s["my_recover_to"] * s["min_per_hp"] * 60) + 600   # аварийный потолок сна
-            if hp is not None and hp >= s["my_recover_to"]:
+            now = time.time()
+            cap = (s["my_recover_to"] * s["min_per_hp"] * 60) + 600   # аварийный потолок
+            # HP читаем (шлём «Территория») НЕ чаще раза в ~4 мин — не спамим (Максим:
+            # «он что, сам не видит, обязательно территорией спамить?»). Между чтениями
+            # ОЦЕНИВАЕМ HP по времени и скорости регена. Просыпаемся при этом часто —
+            # но лишь для проверки бочки (чтение ленты, не команда игре).
+            est = (self._heal_from_hp or 0) + (now - self._heal_from_t) / max(1.0, s["min_per_hp"] * 60)
+            do_read = (self._heal_from_t == 0.0) or (now - self._last_hp_read >= 240) or (est >= s["my_recover_to"])
+            hp = None
+            if do_read:
+                hp = await self.my_current_hp()
+                self._last_hp_read = now
+                if hp is not None:
+                    self._heal_from_hp, self._heal_from_t, est = hp, now, hp
+            cur = hp if hp is not None else est
+            if cur >= s["my_recover_to"]:
                 self._healing = False
-                log(f"❤️ HP восстановлено ({hp}) — продолжаю набеги.")
-            elif time.time() - self._heal_start > cap:
+                log(f"❤️ HP восстановлено ({int(cur)}) — продолжаю набеги.")
+            elif now - self._heal_start > cap:
                 self._healing = False
                 log("❤️ Потолок лечения истёк — пробую продолжить (проверю HP в бою).")
             else:
-                left_hp = s["my_recover_to"] - (hp or 0)
+                left_hp = s["my_recover_to"] - cur
                 rem_min = max(1.0, left_hp * s["min_per_hp"])            # оценка минут до полного
                 rem_s = rem_min * 60.0
-                shown = str(hp) if hp is not None else "?"
-                # Максим: не долбить HP по 5 раз за лечение — спим ПОЧТИ всё оставшееся
-                # (0.85–1.0), проснёмся у самой цели → 1-2 перечитки вместо пяти. Переспать
-                # не страшно: HP уже восстановится, следующий тик увидит цель и продолжит.
-                # Рандом (после потолка) — анти-палево, чтобы интервалы не совпадали.
-                base = rem_s * random.uniform(0.85, 1.0)
-                # ВАЖНО: во время лечения цикл спит и НЕ проверяет бочку. Если защита от
-                # бочек включена — потолок сна 90с (бочку ловим не реже ~1.5 мин, у неё
-                # таймер 10 мин). Иначе — до 5 мин (реже читаем HP, как просил Максим).
-                cap = 90.0 if (self._bomb_defense or self._defense_only) else 300.0
-                base = min(base, cap)
+                # сон короткий (для бочки), но HP при этом НЕ перечитываем каждый раз.
+                cap_nap = 90.0 if (self._bomb_defense or self._defense_only) else 300.0
+                base = min(rem_s * random.uniform(0.85, 1.0), cap_nap)
                 nap = round(max(45.0, base) * random.uniform(0.9, 1.1))  # ← разброс на потолке
-                log(f"🩶 Лечусь: HP {shown}, до {s['my_recover_to']} ~{rem_min:.0f}м "
-                    f"(~{s['min_per_hp']*60:.0f} с/HP) — перечитаю через {nap}с")
+                tag = f"{int(cur)}" + ("" if hp is not None else "~")   # ~ = оценка, без запроса
+                log(f"🩶 Лечусь: HP {tag}, до {s['my_recover_to']} ~{rem_min:.0f}м "
+                    f"({'читаю' if do_read else 'оценка, не спамлю'}) — след. проверка через {nap}с")
                 return await self.sleep_gated(nap)
         arena = await self.open_arena()
         if not arena:
@@ -2272,6 +2316,7 @@ class Smasher:
         if my_hp is not None and my_hp <= s["my_min_hp"]:
             self._healing = True
             self._heal_start = time.time()
+            self._heal_from_hp, self._heal_from_t, self._last_hp_read = my_hp, time.time(), time.time()
             log(f"🩸 Мои HP {my_hp} ≤ {s['my_min_hp']} — ухожу на лечение до {s['my_recover_to']}.")
             self.interim_report("ушёл на лечение")   # промежуточный итог по ходу дела
             # 🏦 раз уж не бьём и регенимся — заодно собираем казну (но не чаще раза в 10 мин)
