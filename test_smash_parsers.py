@@ -64,6 +64,18 @@ check("НЕ штраф: нет слова репутация", parse_rep_penalty
 check("сумма: 3.6M", parse_amount("3.6M"), 3_600_000)
 check("сумма: 214 300", parse_amount("214 300"), 214_300)
 
+# ── БОЧКА: итог разминирования (регресс — взрыв ловился как обезврежено) ──
+from holop_smash import DEFUSED_WORDS, EXPLODED_WORDS
+BOOM = ("💥 ВЗРЫВ!!! Ты выбрал неправильный фитиль: КРАСНЫЙ! 😱 "
+        "Твоя территория взорвана на 1 час!").lower()
+OKD = ("✅ БОЧКА ОБЕЗВРЕЖЕНА! Ты выбрал правильный фитиль: КРАСНЫЙ! "
+       "🎉 Твоя территория в безопасности!").lower()
+check("бочка: ВЗРЫВ распознаётся как взрыв", any(w in BOOM for w in EXPLODED_WORDS), True)
+check("бочка: ВЗРЫВ НЕ ловится как успех («неправильный»⊃«правильный»)",
+      any(w in BOOM for w in DEFUSED_WORDS), False)
+check("бочка: успех распознаётся как обезврежено", any(w in OKD for w in DEFUSED_WORDS), True)
+check("бочка: успех НЕ ловится как взрыв", any(w in OKD for w in EXPLODED_WORDS), False)
+
 print()
 if _fails:
     print(f"❌ ПРОВАЛЕНО: {len(_fails)} — {', '.join(_fails)}")
