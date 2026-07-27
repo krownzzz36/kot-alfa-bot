@@ -469,6 +469,7 @@ class Smasher:
         self._last_tl_warn = 0.0      # троттл лога про нераспознанные анимации @holop
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
         self._bomb_done = set()       # id уже обработанных нотификаций бочки (не дублировать)
+        self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
         self._bomb_defense = True     # 🛡️ защищаться от бочек во время набегов (галочка, деф ВКЛ)
         self._defense_only = False    # 🛡️ режим ТОЛЬКО защита от бочек: не фармим, только сторожим бочку
         # ВАЖНО: только ТЕПЕРЬ, когда все флаги проинициализированы, читаем настройки
@@ -1762,6 +1763,26 @@ class Smasher:
         self._bomb_alert_until = 0.0
         return True
 
+    async def _bomb_guard_tick(self):
+        """Проверка бочки ВНУТРИ прохода набегов (между целями), не чаще ~раз в 20с.
+        Раньше бочка проверялась только в начале цикла, а проход по целям (особенно
+        свободная охота — до 10 целей) длился до ~5 минут → бот реагировал на бочку
+        с задержкой в минуты (подтверждено скринами Макса: фитиль на «осталось 4м57с»).
+        Вернуть True, если бочка была обработана — тогда проход надо прервать."""
+        if not (self._bomb_defense or self._defense_only):
+            return False
+        now = time.time()
+        if now - self._last_bomb_scan < 20:
+            return False
+        self._last_bomb_scan = now
+        try:
+            return await self.check_and_handle_bomb()
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            log(f"  ⚠️ сбой проверки бочки в проходе: {type(e).__name__}: {e}")
+            return False
+
     async def handle_bomb(self, mined):
         """Разминировать бочку на её сообщении: Огниво → красный фитиль → итог.
         Промах (33%) → восстановление. Огниво НЕ покупаем (Владимир держит запас вручную)."""
@@ -2292,6 +2313,8 @@ class Smasher:
         for t in eligible:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
+            if await self._bomb_guard_tick():
+                return None   # 💣 бочка важнее набега — обработали, прерываем проход
             my_after = await self.do_target(t)
             self._last_hit_name = t          # запомнили позицию — после лечения продолжим отсюда
             if isinstance(my_after, int) and my_after <= s["my_min_hp"]:
@@ -2316,6 +2339,8 @@ class Smasher:
         for t in names:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
+            if await self._bomb_guard_tick():
+                return None   # 💣 бочка важнее охоты — обработали, прерываем проход
             my_after = await self.do_target(t)
             self._last_hit_name = t
             if isinstance(my_after, int) and my_after <= s["my_min_hp"]:
