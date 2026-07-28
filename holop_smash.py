@@ -478,6 +478,8 @@ class Smasher:
         self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
         self._human_mode = False      # 🧑 человеческий ритм: иногда «отходит» на перерыв (не замена 24/7!)
         self._next_human_break = 0.0
+        self._human_idle = True       # 🎭 человеческие залипы (палата/рейтинги — антидетект, Максим), деф ВКЛ
+        self._next_human_idle = 0.0
         self._notify_dm = False       # 🔔 слать себе в Избранное о критичном (по галочке, деф ВЫКЛ)
         self._notify_sent = {}        # ключ события -> когда слали (троттлинг)
         self._oboz_until = 0.0        # до какого времени действует обоз (из oboz_state.json)
@@ -718,6 +720,15 @@ class Smasher:
                 "Фармить продолжаю, в т.ч. ночью.")
         elif not self._human_mode and was_human:
             log("🤖 Человеческий режим ВЫКЛ — работаю без перерывов 24/7.")
+        # 🎭 человеческие залипы (антидетект): собрать палату / позалипать в инфо-экраны
+        was_idle = getattr(self, "_human_idle", True)
+        self._human_idle = bool(data.get("human_idle", True))
+        if self._human_idle and not self._next_human_idle:
+            self._next_human_idle = time.time() + random.uniform(1200, 2400)  # первый через 20–40 мин
+        if self._human_idle and not was_idle:
+            log("🎭 Человеческие залипы ВКЛ — иногда захожу собрать палату / потупить в рейтинги (антидетект).")
+        elif not self._human_idle and was_idle:
+            log("🎭 Человеческие залипы ВЫКЛ.")
 
     def ensure_targets_file(self):
         """Если файла целей нет — создать с текущим списком (чтобы панель могла его показать)."""
@@ -1180,6 +1191,50 @@ class Smasher:
                     return m
             await rsleep(0.5)
         return None
+
+    # ---------- 🧑 ЧЕЛОВЕЧЕСКИЙ ЗАЛИП (анти-детект, 3-й пункт Максима) ----------
+    async def human_idle_action(self):
+        """Изредка кот делает безобидное НЕ-боевое действие — как живой игрок: собрать
+        палату (репутация раз в 24ч) или позалипать в инфо-экран (достижения/рейтинг/
+        профиль). Ломает чисто-ботовый паттерн «поиск+удар». Всё через обычную навигацию,
+        экраны редактируются на месте (тот же message_id → refetch). Работает в любом режиме."""
+        terr = await self.open_territory()
+        if not terr:
+            log("  🧑 залип: территория не открылась — пропускаю")
+            return
+        # палата чаще (полезно + Максим назвал), просмотр — для разнообразия
+        if random.random() < 0.55:
+            await self._human_palata(terr)
+        else:
+            await self._human_browse(terr)
+
+    async def _human_palata(self, terr):
+        if not await self.click_text(terr, "Палата", label="залип: Палата"):
+            return
+        await rsleep(random.uniform(1.5, 4))            # «дошёл до палаты»
+        pal = await self.refetch(terr.id) or terr
+        collect = next((rc for rc in self.flat_buttons(pal)
+                        if "собрать" in (rc[2] or "").lower()), None)
+        if collect:
+            res = await self.click(pal, collect[0], collect[1], label="залип: собрать палату")
+            alert = (self._alert_text(res) or "").strip()
+            log(f"  🏛️ Залип: собрал палату{(' — ' + alert) if alert else ''}")
+            await rsleep(random.uniform(1, 3))
+            pal = await self.refetch(terr.id) or pal
+        else:
+            log("  🏛️ Залип: заглянул в палату (сбор ещё копится) — иду дальше")
+            await rsleep(random.uniform(1, 3))
+        await self.click_text(pal, "Назад", label="залип: назад")
+
+    async def _human_browse(self, terr):
+        pick = random.choice(["Достижения", "Баллы сезона", "Мой профиль",
+                              "Инвентарь", "Мои постройки"])
+        if not await self.click_text(terr, pick, label=f"залип: {pick}"):
+            return
+        log(f"  🧑 Залип: смотрю «{pick}» — как живой игрок")
+        await rsleep(random.uniform(2.5, 7))            # «читает» экран
+        scr = await self.refetch(terr.id) or terr
+        await self.click_text(scr, "Назад", label="залип: назад")
 
     # ---------- РЕГЕН: простая формула, база ИЗВЕСТНА = 60 с/HP (1 HP/мин) ----------
     # Максим (инфа 100%): база регена = 1 HP за 60с. Бонусы складываются, «Сердце» =
@@ -2569,6 +2624,16 @@ class Smasher:
                     raise
                 log(f"  ⚠️ авто-оборона сбой: {type(e).__name__}: {e}")
                 self._next_defense = time.time() + 900 + random.uniform(-180, 180)   # ~15 мин ± 3 при сбое
+            return None
+        # 🎭 ЧЕЛОВЕЧЕСКИЙ ЗАЛИП (антидетект): изредка безобидное не-боевое действие
+        if self._human_idle and self._next_human_idle and time.time() >= self._next_human_idle:
+            try:
+                await self.human_idle_action()
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"  ⚠️ человеческий залип сбой: {type(e).__name__}: {e}")
+            self._next_human_idle = time.time() + random.uniform(2400, 5400)  # следующий через ~40–90 мин
             return None
         # ═══ СПОКОЙНЫЙ РЕЖИМ (только защита): дальше — БОЕВОЕ, его пропускаем ═══
         if self._defense_only:

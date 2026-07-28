@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.28-40"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.28-41"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -626,7 +626,7 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "req_delay_lo": 1.5, "req_delay_hi": 3.5,
                            "bomb_defense": True, "defense_only": False,
                            "bomb_gold_kazna": True, "auto_guard": False,
-                           "sauron_mode": False}
+                           "sauron_mode": False, "human_idle": True}
 
 
 def load_smash_settings():
@@ -671,6 +671,7 @@ def save_smash_settings(body):
         out["bomb_gold_kazna"] = bool(body.get("bomb_gold_kazna", cur["bomb_gold_kazna"]))
         out["auto_guard"] = bool(body.get("auto_guard", cur["auto_guard"]))
         out["sauron_mode"] = bool(body.get("sauron_mode", cur["sauron_mode"]))   # 🔥 режим Саурона
+        out["human_idle"] = bool(body.get("human_idle", cur["human_idle"]))      # 🎭 человеческие залипы
     except (TypeError, ValueError):
         return False
     try:
@@ -1493,6 +1494,7 @@ function render(mid){
             ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
             ${swHTML('set_human','🧑 Человеческий режим — иногда «отходить» на 8–30 мин (дополнение, не замена ночному фарму)')}
+            ${swHTML('set_human_idle','🎭 Человеческие залипы — изредка зайти собрать палату / потупить в рейтинги (антидетект)')}
             ${swHTML('set_notify','🔔 Слать мне в Избранное о важном (бочка/лечение) — по желанию, деф выкл')}
           </div>
           <button class="b-blue" style="margin-top:14px" onclick="saveSettings()">💾 Сохранить настройки</button>
@@ -1655,6 +1657,7 @@ async function loadSettings(){
     const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
+    const hi=$('#set_human_idle'); if(hi) hi.checked=(d.human_idle!==false);
     const nt=$('#set_notify'); if(nt) nt.checked=!!d.notify_dm;
     if(c) c.disabled=!!(ra&&ra.checked);
     const dl=$('#set_delay_lo'); if(dl && document.activeElement!==dl) dl.value=d.req_delay_lo;
@@ -1680,6 +1683,7 @@ async function saveSettings(){
     free_hunt:!!($('#set_free_hunt')||{}).checked,
     war_mode:!!($('#set_war')||{}).checked,
     human_mode:!!($('#set_human')||{}).checked,
+    human_idle:!!($('#set_human_idle')||{}).checked,
     notify_dm:!!($('#set_notify')||{}).checked};
   try{ const r=await fetch('/api/raids/settings',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json(); const n=$('#snote');
@@ -1726,6 +1730,7 @@ const GUIDE_SECTIONS=[
    <p><b>🏦 Брать золото на защиту из казны</b> — на защиту холопов после взрыва нужно золото. Если держишь золото на балансе (на кармане) — оставь выкл, бот возьмёт оттуда. Если сгружаешь золото в казну (депозит) — включи, и бот сам снимет недостающее из казны. По умолчанию включено.</p>
    <p><b>🔔 Слать мне в Избранное</b> — важные события (бочка/лечение) прилетают тебе личным сообщением в «Избранное» Telegram. Узнаёшь сразу, даже не открывая пульт. <b>По умолчанию выключено</b> — включи галочкой, если хочешь уведомления.</p>
    <p><b>🧑 Человеческий режим</b> — бот иногда «отходит» на 8–30 минут, чтобы активность не была машинно-ровной сутками (менее палевно). Это ДОПОЛНЕНИЕ, не замена — фармить продолжает, в том числе ночью. По умолчанию выключен.</p>
+   <p><b>🎭 Человеческие залипы</b> — раз в ~40–90 минут кот делает безобидное НЕ-боевое действие, как живой игрок: заходит собрать <b>палату</b> (репутация, раз в 24ч — реальный плюс к бою) или просто «залипает» в достижения / баллы сезона / профиль. Ломает чисто-ботовый рисунок «поиск→удар→поиск→удар». Работает и в бою, и в спокойном режиме. По умолчанию <b>включено</b> (антидетект — «безопасность наше всё»).</p>
    <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],
  ['🎭','Роли холопов',`
    <p>Перегоняет холопа в нужную профессию: выгоняет → тут же захватывает обратно → читает профессию → повторяет, пока не выпадет нужная. Бот успевает в 30-сек окно эксклюзива, поэтому холопа не уводят (руками — уводят).</p>
