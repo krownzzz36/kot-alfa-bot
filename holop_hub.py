@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.28-42"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-43"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -626,7 +626,7 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "req_delay_lo": 1.5, "req_delay_hi": 3.5,
                            "bomb_defense": True, "defense_only": False,
                            "bomb_gold_kazna": True, "auto_guard": False,
-                           "sauron_mode": False, "human_idle": True}
+                           "sauron_mode": False, "human_idle": True, "holop_guard": True}
 
 
 def load_smash_settings():
@@ -672,6 +672,7 @@ def save_smash_settings(body):
         out["auto_guard"] = bool(body.get("auto_guard", cur["auto_guard"]))
         out["sauron_mode"] = bool(body.get("sauron_mode", cur["sauron_mode"]))   # 🔥 режим Саурона
         out["human_idle"] = bool(body.get("human_idle", cur["human_idle"]))      # 🎭 человеческие залипы
+        out["holop_guard"] = bool(body.get("holop_guard", cur["holop_guard"]))   # 🚨 анти-кража холопа
     except (TypeError, ValueError):
         return False
     try:
@@ -1490,6 +1491,7 @@ function render(mid){
             ${swHTML('set_hit_shields','🏹 Сносить донат-щит требушетом и фармить (выкл — беречь требушеты)')}
             ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
             ${swHTML('set_bomb_defense','💣 Защита от бочек (разминировать + восстановить после взрыва) — держать ВКЛ')}
+            ${swHTML('set_holop_guard','🚨 Анти-кража холопа (украли — мгновенно выкупаю обратно и ставлю на защиту) — держать ВКЛ')}
             ${swHTML('set_bomb_gold_kazna','🏦 После взрыва брать золото на защиту холопов из казны, если на балансе мало')}
             ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
@@ -1652,6 +1654,7 @@ async function loadSettings(){
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
     const bd=$('#set_bomb_defense'); if(bd) bd.checked=(d.bomb_defense!==false);
+    const hg=$('#set_holop_guard'); if(hg) hg.checked=(d.holop_guard!==false);
     const bgk=$('#set_bomb_gold_kazna'); if(bgk) bgk.checked=(d.bomb_gold_kazna!==false);
     const ag=$('#set_auto_guard'); if(ag) ag.checked=!!d.auto_guard;
     const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
@@ -1678,6 +1681,7 @@ async function saveSettings(){
     bank_gold:!!($('#set_bank_gold')||{}).checked,
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
     bomb_defense:!!($('#set_bomb_defense')||{}).checked,
+    holop_guard:!!($('#set_holop_guard')||{}).checked,
     bomb_gold_kazna:!!($('#set_bomb_gold_kazna')||{}).checked,
     auto_guard:!!($('#set_auto_guard')||{}).checked,
     free_hunt:!!($('#set_free_hunt')||{}).checked,
@@ -1716,6 +1720,11 @@ const GUIDE_SECTIONS=[
    <p><b>🔥 Пнуть</b> — ударить по цели вне очереди. Если идут <b>Набеги</b> — цель бьётся <b>приоритетно</b> (первой, подхват между целями ~30 сек). Если бот в режиме <b>«только защита»</b> — <b>немедленный вылет</b> по ней. Работает, только пока кот запущен (Набеги или Защита) — иначе бить некому.</p>
    <p><b>Карточка с огненной рамкой «⚔ ЦЕЛЬ ОТКРЫТА»</b> — щит спал и КД прошёл, можно бить прямо сейчас.</p>
    <p><b>👁 Режим Саурона</b> — пасхалка: кот «перевоплощается», в журнале появляются зловещие реплики («ПОКОРЁН», «повержен предо мной»), пульт тлеет огнём. На фарм не влияет — чистый антураж. Выключается тем же тумблером.</p>`],
+ ['🚨','Анти-кража холопа',`
+   <p>Если у тебя <b>выкупили холопа</b> (приходит «🪙 У тебя выкупили холопа»), кот <b>мгновенно бросает всё</b> и начинает гонку за возврат — сам, без тебя.</p>
+   <p><b>Как работает:</b> жмёт «Выкупить обратно» (платит <b>серебром</b>), холоп снова твой. Защитить сразу нельзя — игра даёт сопернику окно ~23 сек на обратный выкуп. Кот держит холопа, а как окно проходит — ставит «Защитить» (<b>золото</b>, ~120). Соперник успел перекупить — кот выкупает заново. Так до тех пор, пока: холоп <b>защищён</b>, или выпал <b>Волхв</b> (профессия, которую перехватить нельзя — у кого холоп в этот момент, тот и оставил), или прошло 60 сек.</p>
+   <p><b>Деньги:</b> кот заранее проверяет серебро/золото на руках; если мало — быстро снимает с казны (⭐ Мастер/Кандалы не трогает). Держи немного серебра и золота на балансе, чтоб не терять секунды на казну.</p>
+   <p>Галочка <b>«🚨 Анти-кража холопа»</b> в «Настройки боя», по умолчанию <b>включено</b>. Работает и в бою, и в спокойном режиме.</p>`],
  ['🎛️','Набеги — Настройки боя',`
    <p><b>Воевать, пока HP выше</b> — если моё HP упало ниже, бот уходит лечиться. <b>Лечиться до HP</b> — до какого значения восстанавливаться.</p>
    <p><b>Реген: секунд на 1 HP</b> — скорость восстановления. Можно вписать вручную. Или включить <b>Авто-реген</b> — тогда бот сам считает по бонусам с Территории И <b>уточняет по факту</b> (замеряет реальное восстановление во время лечения). При левелапе пересчитает сам.</p>

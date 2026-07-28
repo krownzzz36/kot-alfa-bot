@@ -149,6 +149,12 @@ MINED_MARKER = "ЗАМИНИРОВАНА"                 # «⚠️ ТВОЯ Т
 BOMB_NOTIF = "ЗАМИНИРОВАН"                    # ловит и «ЗАМИНИРОВАНА», и «💣 ЗАМИНИРОВАНО!»
 BOMB_WARN = "скоро взорвётся"                 # поздний пуш «Бочка ... скоро взорвётся»
 ATTACK_MARKER = "НА ТЕБЯ НАПАЛИ"              # пуш о набеге на меня → ров/частокол могли сгореть
+# 🚨 УГОН ХОЛОПА (анти-кража): выкуп обратно (серебро) → выждать окно 23с → защита (золото).
+THEFT_NOTIF = "выкупили холопа"               # уведомление «🪙 У тебя выкупили холопа»
+THEFT_BOUGHT = "холоп выкуплен"               # экран после выкупа (холоп СНОВА мой)
+THEFT_BUYBACK_BTN = "выкупить обратно"        # кнопка выкупа (цена в серебре)
+THEFT_PROTECT_BTN = "защитить"                # кнопка защиты (цена в золоте, ~120)
+VOLHV_WORD = "волхв"                          # профессия, которую нельзя перехватить → конец гонки
 
 
 async def rsleep(base, spread=0.35):
@@ -500,6 +506,9 @@ class Smasher:
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
         self._bomb_done = set()       # id уже обработанных нотификаций бочки (не дублировать)
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
+        self._holop_guard = True      # 🚨 авто-отбой угона холопа (выкуп/защита), галочка, деф ВКЛ
+        self._theft_done = set()      # id обработанных уведомлений угона (не зациклиться)
+        self._last_theft_scan = 0.0   # когда последний раз сканировали угон внутри прохода
         self._remote_on = bool(cfg.get("remote_control", True))   # 🎮 удалёнка через «Избранное»
         self._remote_last_id = 0      # id последнего обработанного сообщения-команды
         self._remote_last_poll = 0.0  # троттл опроса Избранного
@@ -511,7 +520,7 @@ class Smasher:
         # False — из-за этого на старте не работал авто-реген (реген оставался 1.0 м/HP).
         self.apply_live_settings()
         self.stats.update({"bombs": 0, "defused": 0, "exploded": 0,
-                           "spent_gold": 0, "spent_silver": 0})
+                           "spent_gold": 0, "spent_silver": 0, "thefts": 0, "saved_holops": 0})
 
     # ---------- список целей (файл smash_targets.txt) ----------
     # ---------- КЭШ КД/ЩИТОВ ЦЕЛЕЙ (переживает перезапуск — анти-палево) ----------
@@ -690,6 +699,7 @@ class Smasher:
         self._auto_guard = bool(data.get("auto_guard", getattr(self, "_auto_guard", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
+        self._holop_guard = bool(data.get("holop_guard", getattr(self, "_holop_guard", True)))  # 🚨 анти-кража холопа
         self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
         self._bomb_gold_kazna = bool(data.get("bomb_gold_kazna", getattr(self, "_bomb_gold_kazna", True)))
         was_sauron = getattr(self, "_sauron", False)
@@ -2065,6 +2075,151 @@ class Smasher:
             log(f"  ⚠️ сбой проверки бочки в проходе: {type(e).__name__}: {e}")
             return False
 
+    # ═══════════════ 🚨 АНТИ-КРАЖА ХОЛОПА (выкуп обратно → защита) ═══════════════
+    # Механика (разведано вживую 28.07): приходит «🪙 У тебя выкупили холопа» с кнопкой
+    # «Выкупить обратно (серебро)». Жмём → «✅ Холоп выкуплен!» с «Защитить за N золота».
+    # НО защитить сразу нельзя — алерт «Подожди 23 сек» (окно обратного выкупа соперника).
+    # Держим окно; соперник перекупил → новое уведомление → выкупаем снова. Продержал окно →
+    # защита встаёт («🛡️ Охрана установлена на 24 часов»). Каждый выкуп меняет профессию
+    # случайно; выпал ВОЛХВ — перехват невозможен, гонка окончена (у кого холоп, тот оставил).
+    def _theft_latest(self, msgs):
+        """Новейшее сообщение гонки за холопа (выкупили ИЛИ выкуплен) с кнопками."""
+        for m in sorted(msgs, key=lambda x: x.id, reverse=True):
+            if m.out:
+                continue
+            low = (m.message or "").lower()
+            if (THEFT_NOTIF in low or THEFT_BOUGHT in low) and self.flat_buttons(m):
+                return m
+        return None
+
+    async def check_and_handle_theft(self):
+        """Поймать «У тебя выкупили холопа» и включить гонку выкупа/защиты. True — обработано."""
+        if not self._holop_guard:
+            return False
+        notif = None
+        try:
+            for m in sorted(await self.recent(15), key=lambda x: x.id, reverse=True):
+                if m.out or m.id in self._theft_done:
+                    continue
+                low = (m.message or "").lower()
+                if THEFT_NOTIF in low and self._has(m, THEFT_BUYBACK_BTN):
+                    notif = m
+                    break
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            return False
+        if not notif:
+            return False
+        try:
+            await self.handle_holop_theft(notif)
+        finally:
+            # пометить ВСЕ текущие сообщения гонки обработанными — чтобы не зацикливаться на старом
+            try:
+                for m in await self.recent(12):
+                    low = (m.message or "").lower()
+                    if THEFT_NOTIF in low or THEFT_BOUGHT in low:
+                        self._theft_done.add(m.id)
+            except Exception:
+                pass
+            if len(self._theft_done) > 300:
+                self._theft_done = set(sorted(self._theft_done)[-150:])
+        return True
+
+    async def _theft_guard_tick(self):
+        """Проверка угона холопа между целями — чаще бочки (гонка тугая, окно ~23с)."""
+        if not self._holop_guard:
+            return False
+        now = time.time()
+        if now - self._last_theft_scan < 8:
+            return False
+        self._last_theft_scan = now
+        try:
+            return await self.check_and_handle_theft()
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            log(f"  ⚠️ сбой проверки угона холопа: {type(e).__name__}: {e}")
+            return False
+
+    async def handle_holop_theft(self, first):
+        name = re.search(r"Холоп:\s*([^\n]+)", first.message or "")
+        name_s = name.group(1).strip() if name else "?"
+        log(f"🚨🚨 УГОН ХОЛОПА «{name_s}» — бросаю всё, включаю выкуп/защиту.")
+        await self.notify_me(f"🚨 У тебя выкупили холопа {name_s} — отбиваю (выкуп→защита).",
+                             key="theft", throttle=120)
+        self.stats["thefts"] += 1
+        # ДЕНЬГИ ГОТОВИМ ОДИН РАЗ (казна медленная — нельзя дёргать её на каждый выкуп в гонке):
+        # серебро на ~10 выкупов + золото на защиту. Обычно уже на руках → ensure вернёт сразу.
+        try:
+            await self.ensure_silver(15000)
+            await self.ensure_gold(200)
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            log(f"  ⚠️ подготовка денег к отбою: {type(e).__name__}: {e}")
+        deadline = time.time() + 90.0
+        won = False
+        while time.time() < deadline:
+            m = self._theft_latest(await self.recent(10))
+            if not m:
+                await rsleep(2)
+                continue
+            low = (m.message or "").lower()
+            prof = re.search(r"Профессия:\s*([^\n]+)", m.message or "")
+            prof_s = (prof.group(1) if prof else "").lower()
+            # ── ВОЛХВ: гонка закрыта (перехват невозможен) ──
+            if VOLHV_WORD in prof_s or VOLHV_WORD in low:
+                if THEFT_BOUGHT in low:
+                    log(f"  👑 ВОЛХВ — «{name_s}» закреплён за МНОЙ, перехват невозможен. Победа!")
+                    won = True
+                else:
+                    log(f"  💀 ВОЛХВ у соперника — «{name_s}» потерян (перехватить нельзя).")
+                break
+            # ── холоп у СОПЕРНИКА → выкупаю обратно ──
+            if THEFT_NOTIF in low:
+                if await self._click_sub(m, THEFT_BUYBACK_BTN, label=f"выкуп {name_s}"):
+                    self.stats["saved_holops"] = self.stats.get("saved_holops", 0)  # счётчик побед ниже
+                    log(f"  🪙 Выкупил «{name_s}» обратно — держу окно ~23с.")
+                await rsleep(1.5)
+                continue
+            # ── холоп МОЙ → пробую защитить ──
+            if THEFT_BOUGHT in low:
+                p = self._btn_pos(m, THEFT_PROTECT_BTN)
+                if not p:
+                    await rsleep(2)
+                    continue
+                res = await self.click(m, p[0], p[1], label=f"защитить {name_s}")
+                alert = (self._alert_text(res) or "").lower()
+                if "охрана установлена" in alert or "защищ" in alert:
+                    log(f"  🛡️ «{name_s}» ЗАЩИЩЁН! ({self._alert_text(res).strip()}) Победа!")
+                    self.stats["saved_holops"] += 1
+                    won = True
+                    break
+                if "подожди" in alert:
+                    sec = re.search(r"(\d+)\s*сек", alert)
+                    wait = int(sec.group(1)) if sec else 20
+                    log(f"  ⏱ Ещё рано защищать (окно {wait}с) — держу, слежу за перекупом.")
+                    waited = 0.0
+                    while waited < wait + 1 and time.time() < deadline:
+                        await rsleep(3)
+                        waited += 3
+                        nm = self._theft_latest(await self.recent(6))
+                        if nm and THEFT_NOTIF in (nm.message or "").lower():
+                            break                 # соперник перекупил → на выкуп
+                    continue
+                if "не твой" in alert:
+                    log(f"  ↩️ «{name_s}» перекуплен — выкупаю заново.")
+                    await rsleep(1)
+                    continue
+                log(f"  ⁇ защита: алерт «{self._alert_text(res).strip()}» — продолжаю.")
+                await rsleep(2)
+                continue
+            await rsleep(2)
+        if not won and time.time() >= deadline:
+            log(f"  🏁 60+ сек прошло — «{name_s}»: что есть, то есть (Волхва не дождались).")
+        return True
+
     async def handle_bomb(self, mined):
         """Разминировать бочку на её сообщении: Огниво → красный фитиль → итог.
         Промах (33%) → восстановление. Огниво НЕ покупаем (Владимир держит запас вручную)."""
@@ -2589,6 +2744,15 @@ class Smasher:
         s = self.s
         self.heartbeat()
         await self._remote_poll()   # 🎮 команды из «Избранного» (стоп/старт/статус/…)
+        # 🚨 ПРИОРИТЕТ №0: угон холопа — окно всего ~60с (23с на перекуп), важнее ВСЕГО.
+        if self._holop_guard:
+            try:
+                if await self.check_and_handle_theft():
+                    return None
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"  ⚠️ проверка угона холопа: {type(e).__name__}: {e}")
         # 💣 ПРИОРИТЕТ №1: защита от бочки (если включена галочкой). Важнее набегов и лечения.
         if self._bomb_defense or self._defense_only:
             try:
@@ -2764,6 +2928,8 @@ class Smasher:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
             await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
+            if await self._theft_guard_tick():
+                return None   # 🚨 угон холопа важнее всего — отбили, прерываем проход
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее набега — обработали, прерываем проход
             await self._oko_sortie()   # 🔥 Око: пнули из панели → бьём немедленно, между целями
@@ -2795,6 +2961,8 @@ class Smasher:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
             await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
+            if await self._theft_guard_tick():
+                return None   # 🚨 угон холопа важнее охоты — отбили, прерываем проход
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее охоты — обработали, прерываем проход
             await self._oko_sortie()   # 🔥 Око: пнули из панели → бьём немедленно, между целями
