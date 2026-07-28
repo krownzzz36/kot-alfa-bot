@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.28-39"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.28-40"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -330,7 +330,7 @@ MODULES = [
     },
     {
         "id": "oko", "title": "Око Саурона", "emoji": "🔥", "kind": "oko",
-        "desc": "Мордор следит. Вписывай ников — Око покажет их живьём (HP/щит/КД) и даст «пнуть». Данные локальные, без запросов к игре.",
+        "desc": "Бета. Мордор следит. Вписывай ников — Око покажет их живьём (HP/щит/КД) и даст «пнуть». Данные локальные, без запросов к игре.",
     },
     {
         "id": "roles", "title": "Роли холопов", "emoji": "🎭", "kind": "oneshot",
@@ -379,7 +379,7 @@ MODULES = [
                    {"id": "max_def", "label": "Макс. защита цели (0 = любая; напр. 500 для боя за 1 HP)",
                     "kind": "number", "default": 0}],
         "selects": [{"id": "skip_def", "label": "Пропускать цели с ров/частокол/защитой",
-                     "options": ["Да", "Нет"], "default": "Да"}],
+                     "options": ["Нет", "Да"], "default": "Нет"}],
         "actions": [{"id": "run", "label": "🔎 Найти цели"},
                     {"id": "dry", "label": "Холостой (dry-run)"}],
     },
@@ -717,7 +717,7 @@ def build_args(mid, action, fields):
         # holop_raid.py без --attack = ТОЛЬКО собрать список ников (не бьёт)
         args = ["--want", str(int(f.get("want") or 10)),
                 "--pages", str(int(f.get("pages") or 6))]
-        if (f.get("skip_def") or "Да").strip().lower().startswith("да"):
+        if (f.get("skip_def") or "Нет").strip().lower().startswith("да"):
             args.append("--skip-defended")
         md = int(f.get("max_def") or 0)
         if md > 0:
@@ -2082,6 +2082,9 @@ const OKO = (function(){
         border:1px solid rgba(255,90,31,.18);box-shadow:inset 0 0 90px rgba(255,60,10,.10),0 24px 60px -20px #000;}
       .oko-head{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;position:relative;z-index:2}
       .oko-eye{width:150px;height:188px;image-rendering:pixelated;filter:drop-shadow(0 0 26px rgba(255,80,20,.75)) drop-shadow(0 0 60px rgba(255,40,0,.35))}
+      .oko-beta{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+        color:#ffd36b;-webkit-text-fill-color:#ffd36b;background:rgba(255,90,20,.16);border:1px solid rgba(255,150,60,.5);
+        border-radius:6px;padding:2px 7px;margin-left:12px;vertical-align:middle;top:-6px;position:relative}
       .oko-title{font-family:var(--font);font-weight:800;letter-spacing:.32em;font-size:26px;
         background:linear-gradient(180deg,#ffe08a,#ff7a1f 55%,#b31313);-webkit-background-clip:text;background-clip:text;color:transparent;
         text-transform:uppercase;margin:2px 0 0}
@@ -2142,7 +2145,7 @@ const OKO = (function(){
         <div class="oko-embers" id="okoEmbers"></div>
         <div class="oko-head">
           <canvas class="oko-eye" id="okoEye" width="64" height="80"></canvas>
-          <div class="oko-title">Око Саурона</div>
+          <div class="oko-title">Око Саурона<sup class="oko-beta">Бета</sup></div>
           <div class="oko-sub">Ни одна жертва не укроется. Впиши имена — Око узрит их плоть, щиты и часы бессилия.</div>
         </div>
         <div class="oko-controls">

@@ -603,12 +603,22 @@ class Raider:
             attackable = button_attackable(tbtns[idx])
             ok_atk = self.beatable(b["defense"])
             ok_lvl = (b["level"] or 0) >= self.min_level
+            btn_low = (tbtns[idx] or "").lower()
+            # ВРЕМЕННЫЙ щит («Закрыто»/«щит») — НЕ навсегда: берём цель в набег, парковка в
+            # смашере сама дождётся спадения и вернёт в бой (Максим: доставать из бочки ВСЕХ).
+            # Постоянные блоки (свой клан / граница / недоступ) — мимо, их не пробить никогда.
+            perm_block = any(w in btn_low for w in ("клан", "границ", "недоступ"))
+            shielded = (not attackable) and (not perm_block) and any(w in btn_low for w in ("закрыт", "щит"))
             if attackable and ok_atk and ok_lvl:
-                hit.append({**t, "defense": b["defense"], "hp": b["hp"]})
+                hit.append({**t, "defense": b["defense"], "hp": b["hp"], "shielded": False})
                 log(f"   ✅ {t['name']}: защ.{b['defense']} hp{b['hp']} "
                     f"🪙{t['silver']:,}".replace(",", " "))
+            elif shielded and (b["level"] is None or (b["level"] or 0) >= self.min_level):
+                hit.append({**t, "defense": b["defense"], "hp": b["hp"], "shielded": True})
+                log(f"   🛡 {t['name']}: под щитом — беру в набег (припаркуется, вернётся когда щит спадёт) "
+                    f"🪙{t['silver']:,}".replace(",", " "))
             else:
-                why = ("закрыто/щит/соклан" if not attackable else
+                why = ("свой клан/граница" if not attackable else
                        f"ур.{b['level']}<{self.min_level}" if not ok_lvl else
                        f"защ.{b['defense']} не пробить")
                 log(f"   — {t['name']}: {why}")
@@ -748,14 +758,17 @@ class Raider:
     # ---------- оркестрация ----------
     def output_list(self, hitlist):
         """Показать чистый список целей и сохранить ники в raid_targets.txt."""
-        log(f"\n🎯 СПИСОК ЦЕЛЕЙ ДЛЯ НАБЕГА (бьются, без щитов/границ/соклана): {len(hitlist)}")
+        n_sh = sum(1 for t in hitlist if t.get("shielded"))
+        log(f"\n🎯 СПИСОК ЦЕЛЕЙ ДЛЯ НАБЕГА: {len(hitlist)}"
+            + (f" (из них под щитом 🛡 {n_sh} — вернутся в бой сами, когда щит спадёт)" if n_sh else ""))
         log("─" * 52)
         for i, t in enumerate(hitlist, 1):
+            mark = " 🛡" if t.get("shielded") else ""
             log(f"  {i:>2}. {t['name']:<22} 🪙{t['silver']:>11,}".replace(",", " ")
-                + f"  ур.{t['level']}  защ.{t['defense']}  hp{t['hp']}")
+                + f"  ур.{t['level']}  защ.{t['defense']}  hp{t['hp']}{mark}")
         log("─" * 52)
-        # ники в столбик — удобно копировать и бить руками через Поиск
-        nicks = "\n".join(t["name"] for t in hitlist)
+        # ники в столбик — удобно копировать; щитовики помечены комментом (смашер имя парсит чисто)
+        nicks = "\n".join(t["name"] + ("  # 🛡 щит" if t.get("shielded") else "") for t in hitlist)
         log("\nНики (копируй и ищи в «Набеги → Поиск»):\n" + nicks)
         import os
         path = os.path.join(HERE, "raid_targets.txt")
