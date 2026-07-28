@@ -1884,164 +1884,136 @@ class Smasher:
         low = (m.message or "").lower() if m else ""
         return any(w in low for w in ("взорвана", "взорвано", "взрыв"))
 
-    # ─────────── ВОССТАНОВЛЕНИЕ ПОСЛЕ ВЗРЫВА (самодостаточный процесс) ───────────
+    # ─────────── ВОССТАНОВЛЕНИЕ ПОСЛЕ ВЗРЫВА (по правкам Максима, живой лог 28.07) ───────────
+    # Ключевое: подтверждения приходят АЛЕРТОМ (ответ кнопки), а НЕ сообщением — читаем из
+    # результата click(). Золото на защиту берём С БАЛАНСА (в казну за золотом НЕ лезем —
+    # Максим: «оно на кармане должно быть, казна создаёт ошибки»). Серебро 100k — с ретраями
+    # («жать, пока не снимется» — игровой баг). В конце проверяем, что территория не «взорвана».
     async def recover_after_explosion(self):
-        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙) → защищаю всех холопов "
-                       "(10% золота) → возвращаю остаток в депозит.")
+        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙 из казны) → защищаю всех "
+                       "холопов (золото С БАЛАНСА, в казну не лезу).")
         ok_heal = await self.heal_territory()
         ok_prot = await self.protect_all_holops()
-        await self.return_free_to_deposit()
-        self._bomb_log("  🏁 Восстановление завершено — лечение: {}, защита: {}.".format(
+        self._bomb_log("  🏁 Восстановление — лечение: {}, защита: {}.".format(
             "ок" if ok_heal else "НЕ ок", "ок" if ok_prot else "НЕ ок"))
-        await self.notify_me("🛠️ После взрыва: территория {}, холопы {}. Свободный остаток вернул в казну."
+        await self.notify_me("🛠️ После взрыва: территория {}, холопы {}."
                              .format("вылечена" if ok_heal else "НЕ вылечена ⚠️",
                                      "защищены" if ok_prot else "НЕ защищены ⚠️"), key="recov", throttle=1)
 
-    async def _withdraw_silver_100k(self):
-        """Снять из казны 100 000 серебра. Два вида: АВАРИЙНЫЙ (при взрыве: «Снять с депозита»
-        → «Снять 100.0K») и ОБЫЧНЫЙ (Серебро → Снять → Ввести сумму → 100000)."""
-        await self.send("Личная казна")
-        km = await self._wait_msg(lambda m: ("казна" in (m.message or "").lower()
-                                             or "депозит" in (m.message or "").lower()
-                                             or "взорвана" in (m.message or "").lower())
-                                             and self.flat_buttons(m))
-        if not km:
-            self._bomb_log("  ⚠️ казна не открылась (серебро)")
-            return False
-        # АВАРИЙНЫЙ вид (взрыв): «Снять с депозита (…🪙)»
-        if await self._click_sub(km, "снять с депозита", label="Снять с депозита (аварийно)"):
-            step = await self._wait_msg(lambda m: any(("снять" in (bt or "").lower() and "100" in (bt or ""))
-                                                      for _, _, bt in self.flat_buttons(m)))
-            if step and await self._click_sub(step, "100", label="Снять 100.0K🪙"):
-                await rsleep(1.0)
-                self._bomb_log("  🏦 Снял 100k серебра (аварийный вид).")
-                return True
-            self._bomb_log("  ⚠️ аварийно: кнопки «Снять 100.0K» нет. Сырые: "
-                           + (" | ".join(bt for _, _, bt in self.flat_buttons(step)) if step else "(нет)"))
-        # ОБЫЧНЫЙ вид: Серебро (10%/день) → Снять → Ввести сумму → 100000
-        await self.send("Личная казна")
-        km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
-        if km and await self._click_sub(km, "серебро", label="Серебро (10%/день)"):
-            snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
-            if snyat and await self._click_sub(snyat, "снять", label="Снять"):
-                vv = await self._wait_msg(lambda m: self._has(m, "ввести сумму"))
-                if vv and await self._click_sub(vv, "ввести сумму", label="Ввести сумму"):
-                    await rsleep(0.6)
-                    await self.send("100000")
-                    await rsleep(1.2)
-                    self._bomb_log("  🏦 Снял 100000 серебра (обычный вид).")
-                    return True
-        self._bomb_log("  ⚠️ не смог снять серебро на лечение (проверь казну).")
-        return False
+    @staticmethod
+    def _alert_text(res):
+        """Текст всплывающего ответа кнопки (BotCallbackAnswer.message) — там подтверждения."""
+        return (getattr(res, "message", None) or "") if res is not None else ""
 
-    async def heal_territory(self):
-        """Лечение территории за 100 000 серебра: снять из казны → нажать «100.0K🪙»."""
-        await self._withdraw_silver_100k()
+    async def _press_territory_heal(self):
+        """Открыть Территорию, нажать кнопку лечения «100.0K🪙»/«Восстановить». Вернуть текст алерта."""
         await self.send("Территория")
         tmsg = await self._wait_msg(lambda m: "ТЕРРИТОРИЯ" in (m.message or "").upper() and self.flat_buttons(m))
         if not tmsg:
-            self._bomb_log("  ⚠️ территория не открылась для лечения")
-            return False
-        # кнопка лечения = «100.0K🪙» (серебро, без ⭐). Ищем 🪙+«100», либо «восстанов»/«лечи».
+            return None
         heal = None
         for r, c, bt in self.flat_buttons(tmsg):
-            low = (bt or "").lower()
             if STAR in (bt or ""):
                 continue
+            low = (bt or "").lower()
             if ("🪙" in (bt or "") and "100" in (bt or "")) or "восстанов" in low or "лечи" in low:
                 heal = (r, c, bt)
                 break
         if not heal:
-            self._bomb_log("  ⚠️ кнопки лечения «100.0K🪙» нет. Сырые: "
+            self._bomb_log("  ⚠️ на территории нет кнопки лечения «100.0K🪙». Сырые: "
                            + " | ".join(bt for _, _, bt in self.flat_buttons(tmsg)))
-            return False
-        await self.click(tmsg, heal[0], heal[1], label=heal[2])
-        await rsleep(1.2)
-        for _ in range(8):
-            for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
-                if not m.out and "восстановлен" in (m.message or "").lower():
-                    self.stats["spent_silver"] += 100000
-                    self._bomb_log("  ❤️ Территория восстановлена (−100000🪙).")
-                    return True
-            await rsleep(0.5)
-        self._bomb_log(f"  ❤️ Лечение нажал («{heal[2]}») — подтверждения не увидел, проверь территорию.")
-        return True
+            return None
+        res = await self.click(tmsg, heal[0], heal[1], label=heal[2])
+        return self._alert_text(res)
 
-    async def _withdraw_gold_10pct(self):
-        """Снять 10% золота из казны (обычный вид): Золото (5%/день) → Снять → 10%."""
-        await self.send("Личная казна")
-        km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
-        if not km or not await self._click_sub(km, "золото", label="Золото (5%/день)"):
-            self._bomb_log("  ⚠️ казна: не открыл раздел «Золото»")
-            return False
-        snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
-        if not (snyat and await self._click_sub(snyat, "снять", label="Снять")):
-            return False
-        pct = await self._wait_msg(lambda m: self._has(m, "10%"))
-        if pct and await self._click_sub(pct, "10%", label="10% золота"):
-            await rsleep(1.0)
-            self._bomb_log("  🏦 Снял 10% золота из казны на защиту холопов.")
-            return True
-        self._bomb_log("  ⚠️ не нашёл кнопку «10%» на снятии золота.")
+    async def _withdraw_silver_100k(self):
+        """Снять 100 000 серебра из казны с РЕТРАЯМИ (баг: «жать несколько раз»).
+        Аварийный вид (взрыв): «Снять с депозита»→«Снять 100.0K». Обычный: Серебро→Снять→100k/Ввести сумму."""
+        for _ in range(3):
+            await self.send("Личная казна")
+            km = await self._wait_msg(lambda m: any(w in (m.message or "").lower()
+                                                    for w in ("казна", "депозит", "снятие", "взорвана"))
+                                      and self.flat_buttons(m))
+            if not km:
+                await rsleep(1.2)
+                continue
+            # АВАРИЙНЫЙ вид: «Снять с депозита (…🪙)»
+            if await self._click_sub(km, "снять с депозита", label="Снять с депозита"):
+                step = await self._wait_msg(lambda m: any(("снять" in (bt or "").lower() and "100" in (bt or ""))
+                                                          for _, _, bt in self.flat_buttons(m)))
+                if step and await self._click_sub(step, "100", label="Снять 100.0K🪙"):
+                    await rsleep(1.0)
+                    return True
+            # ОБЫЧНЫЙ вид: Серебро → Снять → (кнопка «100k» или Ввести сумму → 100000)
+            elif await self._click_sub(km, "серебро", label="Серебро"):
+                snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
+                if snyat and await self._click_sub(snyat, "снять", label="Снять"):
+                    scr = await self._wait_msg(lambda m: self._has(m, "ввести")
+                                               or any("100" in (bt or "") for _, _, bt in self.flat_buttons(m)))
+                    if scr:
+                        if await self._click_sub(scr, "100", label="Снять 100k"):
+                            await rsleep(1.0)
+                            return True
+                        if await self._click_sub(scr, "ввести", label="Ввести сумму"):
+                            await rsleep(0.6)
+                            await self.send("100000")
+                            await rsleep(1.2)
+                            return True
+            await rsleep(1.2)
+        self._bomb_log("  ⚠️ не смог снять серебро за 3 попытки — проверь казну.")
         return False
 
-    async def _press_protect_all(self):
-        """Холопы → Холопы(N) → «Защитить всех (N) за N×120 золота». True если подтвердилось."""
-        await self.send("Холопы")
-        hub = await self._wait_msg(lambda m: self._has(m, "холопы ("))
-        if not (hub and await self._click_sub(hub, "холопы (", label="список холопов")):
-            self._bomb_log("  ⚠️ не открыл список холопов")
-            return False
-        await rsleep(0.8)
-        lst = await self._wait_msg(lambda m: self._has(m, "защитить всех"))
-        if not lst:
-            self._bomb_log("  ⚠️ кнопки «Защитить всех» нет (охрана цела?).")
-            return False
-        p = self._btn_pos(lst, "защитить всех", skip_star=True)
-        if not p:
-            return False
-        cost = parse_amount(p[2])
-        await self.click(lst, p[0], p[1], label=p[2])
-        await rsleep(1.2)
-        for _ in range(8):
-            for m in sorted(await self.recent(4), key=lambda x: x.id, reverse=True):
-                if not m.out and "защита установлена" in (m.message or "").lower():
-                    if cost:
-                        self.stats["spent_gold"] += cost
-                    self._bomb_log(f"  🛡️ Защита установлена на холопов ({p[2]}).")
-                    return True
-            await rsleep(0.5)
-        self._bomb_log(f"  ⚠️ «Защитить всех» нажал ({p[2]}) — подтверждения нет, вероятно мало золота.")
+    async def heal_territory(self):
+        """Лечение территории 100k серебра. Если свободного серебра мало — снимаем из казны.
+        Жмём «100.0K🪙» на территории, подтверждение читаем из АЛЕРТА. Ретраим, пока территория
+        не перестанет быть «взорвана» (Максим: «жать, пока не снимется; проверять»)."""
+        for attempt in range(4):
+            _, silver = await self.my_balance()
+            if silver < 100000:
+                await self._withdraw_silver_100k()
+            alert = await self._press_territory_heal()
+            if alert and "восстановлен" in alert.lower():
+                self.stats["spent_silver"] += 100000
+                self._bomb_log(f"  ❤️ Территория восстановлена ({alert.strip()}).")
+                return True
+            if not await self._territory_exploded():
+                self._bomb_log("  ❤️ Территория больше не взорвана — лечение засчитано.")
+                return True
+            self._bomb_log(f"  ↻ лечение не подтвердилось (попытка {attempt + 1}/4) — пробую ещё.")
+            await rsleep(1.5)
+        self._bomb_log("  ⚠️ территорию вылечить не удалось за 4 попытки — проверь вручную.")
         return False
 
     async def protect_all_holops(self):
-        """Защитить всех холопов: снять 10% золота → «Защитить всех». Не хватило → ещё 10% и повтор."""
-        await self._withdraw_gold_10pct()
-        if await self._press_protect_all():
-            return True
-        self._bomb_log("  ↻ не хватило золота — снимаю ещё 10% и повторяю защиту.")
-        await self._withdraw_gold_10pct()
-        return await self._press_protect_all()
-
-    async def return_free_to_deposit(self):
-        """Вернуть весь свободный остаток в депозит: Серебро/Золото → Депозит → Положить всё."""
-        for kind in ("серебро", "золото"):
-            try:
-                await self.send("Личная казна")
-                km = await self._wait_msg(lambda m: "казна" in (m.message or "").lower() and self.flat_buttons(m))
-                if not km or not await self._click_sub(km, kind, label=f"{kind} (возврат)"):
-                    continue
-                dep = await self._wait_msg(lambda m: self._has(m, "депозит"))
-                if not (dep and await self._click_sub(dep, "депозит", label="Депозит")):
-                    continue
-                put = await self._wait_msg(lambda m: self._has(m, "положить"))
-                if put and await self._click_sub(put, "положить", label="Положить всё"):
-                    await rsleep(1.0)
-                    self._bomb_log(f"  🏦 Вернул свободное {kind} в депозит.")
-            except Exception as e:
-                if _is_dead_session(e):
-                    raise
-                self._bomb_log(f"  ⚠️ возврат {kind} в казну сорвался: {type(e).__name__}")
+        """Защитить ВСЕХ холопов золотом С БАЛАНСА (в казну за золотом НЕ лезем — Максим).
+        Подтверждение — из АЛЕРТА. Ретраим (игровой баг «жать несколько раз»)."""
+        for attempt in range(4):
+            await self.send("Холопы")
+            hub = await self._wait_msg(lambda m: self._has(m, "холопы ("))
+            if not (hub and await self._click_sub(hub, "холопы (", label="список холопов")):
+                await rsleep(1.2)
+                continue
+            await rsleep(0.8)
+            lst = await self._wait_msg(lambda m: self._has(m, "защитить всех"))
+            if not lst:
+                self._bomb_log("  ✅ кнопки «Защитить всех» нет — охрана, вероятно, уже на месте.")
+                return True
+            p = self._btn_pos(lst, "защитить всех", skip_star=True)
+            if not p:
+                return False
+            res = await self.click(lst, p[0], p[1], label=p[2])
+            alert = self._alert_text(res).lower()
+            if "установлен" in alert or "потрачено" in alert:
+                self.stats["spent_gold"] += parse_amount(p[2]) or 0
+                self._bomb_log(f"  🛡️ Защита установлена ({self._alert_text(res).strip()}).")
+                return True
+            self._bomb_log(f"  ↻ защита не подтвердилась (попытка {attempt + 1}/4)"
+                           + (f", алерт: «{self._alert_text(res).strip()}»" if self._alert_text(res) else "")
+                           + ". Пробую ещё.")
+            await rsleep(1.5)
+        self._bomb_log("  ⚠️ защиту холопов подтвердить не удалось. Проверь, что золото есть на балансе "
+                       "(бот в казну за золотом не лезет — держи золото на кармане).")
+        return False
 
     def heartbeat(self):
         now = time.time()
