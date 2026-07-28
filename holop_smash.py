@@ -15,7 +15,7 @@ HOLOP SMASH — автономный авто-бой набегов по ФИК�
       поэтому беру блок со СТРОГИМ совпадением имени и кнопку того же индекса
       (иначе можно ударить не того — баг «SS» ловил «god bless»).
     • Кнопка «Атаковать <Имя>» → цель бьётся:
-        – HP цели ≤ tgt_min_hp (20) → ждать (tgt_recover_to − hp) × min_per_hp мин.
+        – HP цели < tgt_min_hp (20) → ждать (tgt_recover_to − hp) × min_per_hp мин; на 20 уже бьём.
         – иначе УДАР. После удара КД на эту цель = attack_cd (300с) + джиттер 5–15с.
         – Частокол 🪵 / ров — это НЕ отказ (кнопка всё равно «Атаковать»): бьём
           насквозь по КД, пока не пробьём.
@@ -433,6 +433,7 @@ class Smasher:
         self.bench_path = os.path.join(HERE, "smash_bench.txt")     # снятые с ротации после поражения
         self.donate_path = os.path.join(HERE, "smash_donate.txt")   # цели с донат-защитой (Купол/Стена) — не бьём
         self.targets_path = os.path.join(HERE, "smash_targets.txt")  # редактируемый список целей
+        self.shielded_path = os.path.join(HERE, "shielded.json")     # цели под щитом: ник → когда щит спадёт (парковка, Максим)
         self.settings_path = os.path.join(HERE, "smash_settings.json")  # живые настройки из панели
         self.oboz_path = os.path.join(HERE, "oboz_state.json")  # когда истекает обоз (без лишних запросов)
         self._default_targets = list(cfg.get("smash_targets") or TARGETS)
@@ -446,6 +447,7 @@ class Smasher:
         self._cd_cache_path = os.path.join(HERE, "cd_cache.json")  # КД/щиты целей — переживают перезапуск
         self.next_ok = self._load_cd_cache()   # имя -> epoch, когда цель снова доступна (из файла)
         self._cd_saved_at = 0.0
+        self._shielded = self._load_shielded()  # ник -> epoch спадения щита (парковка щитовиков)
         self.stats = {"hits": 0, "wins": 0, "blocked": 0, "loss": 0, "loot": 0, "rep": 0.0}
         self._paused_note = False
         self._last_heartbeat = 0.0
@@ -549,6 +551,45 @@ class Smasher:
         except OSError:
             pass
         return out or list(self._default_targets)
+
+    # ---------- ПАРКОВКА ЩИТОВИКОВ (Максим: не долбить под щитом, вернуть когда спадёт) ----------
+    def _load_shielded(self):
+        try:
+            with open(self.shielded_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return {k: float(v) for k, v in data.items()}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _save_shielded(self):
+        try:
+            with open(self.shielded_path, "w", encoding="utf-8") as f:
+                json.dump(self._shielded, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _park_shield(self, name, secs):
+        """Запарковать цель под щитом: запомнить, когда щит спадёт (+1 мин, т.к. игра НЕ
+        показывает секунды — так наверняка щита уже нет). До этого момента её НЕ трогаем."""
+        self._shielded[name] = time.time() + max(0, secs) + 60
+        self._save_shielded()
+
+    def _is_parked(self, name):
+        exp = self._shielded.get(name)
+        return exp is not None and exp > time.time()
+
+    def _return_expired_shields(self):
+        """В конце прохода: у кого щит спал (по таймеру, локально, БЕЗ запросов) — снимаем
+        с парковки, и он снова бьётся в наборах (он и так в списке smash_targets.txt)."""
+        now = time.time()
+        freed = [n for n, exp in self._shielded.items() if exp <= now]
+        if not freed:
+            return
+        for n in freed:
+            self._shielded.pop(n, None)
+            self.next_ok[n] = 0.0   # снять КД-заглушку — пусть бьётся в ближайший проход
+            log(f"  🛡️→⚔️ {n}: щит спал — снова в набегах.")
+        self._save_shielded()
 
     def apply_live_settings(self):
         """Подхватить настройки боя из панели (smash_settings.json) — применяется на лету."""
@@ -1058,8 +1099,8 @@ class Smasher:
                 if not self._pierce_defenses and i < len(datas) and datas[i] and b"_def_" in datas[i]:
                     continue                      # ров/частокол, «пробивать» выкл
                 hp = b.get("hp")
-                if hp is not None and hp <= self.s["tgt_min_hp"]:
-                    continue                      # слишком слаба — не набьём лут
+                if hp is not None and hp < self.s["tgt_min_hp"]:
+                    continue                      # ниже 20 — не набьём лут (на 20 уже бьём)
                 seen.add(key)
                 defv = b.get("defense")
                 pool.append((defv if defv is not None else 10 ** 9, nm))
@@ -1577,14 +1618,14 @@ class Smasher:
                         f"(«пробивать» выкл), ретрай через {s['defended_retry']}м")
                     return
             hp = b.get("hp")
-            if hp is not None and hp <= s["tgt_min_hp"]:
-                goal = s["tgt_min_hp"] + 1        # бить можно уже с 20+ HP — ждём только до этого
+            if hp is not None and hp < s["tgt_min_hp"]:
+                goal = s["tgt_min_hp"]           # бьём УЖЕ на 20 HP (Максим/Алексей: не ждать 21)
                 wait_min = max(1.0, (goal - hp) * s["min_per_hp"])
                 wait_s = wait_min * 60
                 if self._war_mode:
                     wait_s = min(wait_s, WAR_WEAK_CAP)   # реген цели может быть быстрее расчёта
                 self.next_ok[name] = time.time() + wait_s
-                log(f"  💤 {name}: HP {hp} ≤ {s['tgt_min_hp']} — жду до {goal}+ ~{wait_min:.0f}м")
+                log(f"  💤 {name}: HP {hp} < {s['tgt_min_hp']} — жду до {goal} ~{wait_min:.0f}м")
                 return
             outcome, loot, my_after = await self.attack(res, positions[idx], name)
             # игра отказала по низкому HP — уходим на лечение, удар НЕ засчитан
@@ -1669,26 +1710,28 @@ class Smasher:
             return
         if reason == "weak":
             hp = b.get("hp")
-            if hp is not None and hp <= s["tgt_min_hp"]:
-                goal = s["tgt_min_hp"] + 1        # ждём только до 20+ HP, а не до 50
+            if hp is not None and hp < s["tgt_min_hp"]:
+                goal = s["tgt_min_hp"]           # бьём УЖЕ на 20 HP (не ждать 21)
                 wait_min = max(1.0, (goal - hp) * s["min_per_hp"])
                 wait_s = wait_min * 60
                 if self._war_mode:
                     wait_s = min(wait_s, WAR_WEAK_CAP)   # реген цели может быть быстрее расчёта
                 self.next_ok[name] = time.time() + wait_s
-                log(f"  💤 {name}: слаб (HP {hp}) — жду до {goal}+ ~{wait_min:.0f}м")
+                log(f"  💤 {name}: слаб (HP {hp}) — жду до {goal} ~{wait_min:.0f}м")
             else:
                 self.next_ok[name] = time.time() + s["weak_retry"] * 60
                 log(f"  💤 {name}: слаб — ретрай через {s['weak_retry']}м")
             return
-        # щит → в профиль за таймером
+        # щит → в профиль за таймером ОДИН раз, потом ПАРКУЕМ (не долбим до спадения — Максим)
         secs = await self.shield_seconds(name)
         if secs and secs > 0:
-            self.next_ok[name] = time.time() + secs + (WAR_SHIELD_PAD if self._war_mode else 30)
-            log(f"  🛡️ {name}: под щитом ещё ~{fmt_secs(secs)} — таймер поставлен")
+            self._park_shield(name, secs)   # запомнить время спадения (+1 мин)
+            self.next_ok[name] = time.time() + secs + 60
+            log(f"  🛡️ {name}: под щитом ещё ~{fmt_secs(secs)} — паркую (верну в набеги, когда спадёт).")
         else:
+            self._park_shield(name, s["shield_default_retry"] * 60)
             self.next_ok[name] = time.time() + s["shield_default_retry"] * 60
-            log(f"  🛡️ {name}: щит, таймер не прочитан — ретрай через {s['shield_default_retry']}м")
+            log(f"  🛡️ {name}: щит, таймер не прочитан — паркую на {s['shield_default_retry']}м.")
 
     # ═══════════ ЗАЩИТА ОТ БОЧКИ (динамита) ═══════════
     async def open_druzhina(self):
@@ -2558,9 +2601,12 @@ class Smasher:
         active = self._rotate_after_last(active)   # продолжаем с места остановки, а не сначала
 
         now = time.time()
-        eligible = [t for t in active if self.next_ok.get(t, 0.0) <= now]
+        self._return_expired_shields()   # локально: у кого щит спал — вернуть в бой (без запросов)
+        # цель доступна, если не на КД И не запаркована под щитом
+        eligible = [t for t in active if self.next_ok.get(t, 0.0) <= now and not self._is_parked(t)]
         if not eligible:
-            soonest = min(self.next_ok.get(t, 0.0) for t in active)
+            # цель свободна, когда прошли И КД, И щит → берём max по каждой, min по всем
+            soonest = min(max(self.next_ok.get(t, 0.0), self._shielded.get(t, 0.0)) for t in active)
             # потолок сна 120с — чтобы проверка на бочку срабатывала не реже ~2 мин
             # в ВОЙНЕ просыпаемся почти ровно к освобождению цели (секунды решают)
             cap = WAR_NAP_CAP if self._war_mode else 120.0
@@ -2644,7 +2690,7 @@ class Smasher:
             b = blocks[idx]
             btn = positions[idx][2]
             if button_attackable(btn):
-                verdict = "БЬЁТСЯ" if (b.get("hp") or 0) > self.s["tgt_min_hp"] else f"HP низкий ({b.get('hp')})"
+                verdict = "БЬЁТСЯ" if (b.get("hp") or 0) >= self.s["tgt_min_hp"] else f"HP низкий ({b.get('hp')})"
                 log(f"  ✅ {name}: {verdict} — HP {b.get('hp')}, защ.→{b.get('defense')}, ур.{b.get('level')}")
             else:
                 reason = classify_block_reason(btn)
