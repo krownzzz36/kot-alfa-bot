@@ -867,21 +867,20 @@ class Smasher:
         self._remote_last_poll = now
         try:
             msgs = await self._net(lambda: self.c.get_messages("me", limit=6))
+            for m in sorted(msgs or [], key=lambda x: x.id):
+                if m.id <= self._remote_last_id:
+                    continue
+                self._remote_last_id = m.id
+                await handle_remote_command(self, m.message or "")
+        except asyncio.CancelledError:
+            # get_messages/send отменился при переподключении. CancelledError — это
+            # BaseException, его НЕ ловит `except Exception` → раньше он ПРОБИВАЛ наверх
+            # и УБИВАЛ смашер (graceful-выход без лога). Ловим и просто пропускаем опрос.
+            return
         except Exception as e:
             if _is_dead_session(e):
                 raise
-            log(f"  🎮[diag] опрос Избранного упал: {type(e).__name__}: {e}")
-            return
-        for m in sorted(msgs or [], key=lambda x: x.id):
-            if m.id <= self._remote_last_id:
-                continue
-            self._remote_last_id = m.id
-            try:
-                await handle_remote_command(self, m.message or "")
-            except Exception as e:
-                if _is_dead_session(e):
-                    raise
-                log(f"  ⚠️ удалённая команда сбой: {type(e).__name__}: {e}")
+            log(f"  ⚠️ удалёнка (опрос) сбой: {type(e).__name__}: {e}")
 
     async def remote_init(self):
         """При старте: запомнить текущий хвост Избранного (старое не исполняем) + прислать помощь."""
@@ -892,7 +891,7 @@ class Smasher:
             self._remote_last_id = last[0].id if last else 0
             await self.c.send_message("me", REMOTE_HELP)
             log("🎮 Удалённое управление ВКЛ — пиши команды в «Избранное» Telegram (напиши «помощь»).")
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             pass
 
     async def gate(self):
@@ -2666,6 +2665,8 @@ async def handle_remote_command(bot, text):
     async def reply(msg):
         try:
             await bot._net(lambda: bot.c.send_message("me", msg))   # через переподключатель — надёжно
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             log(f"  ⚠️ не смог ответить в «Избранное»: {type(e).__name__}: {e}")
 
