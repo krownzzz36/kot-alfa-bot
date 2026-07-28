@@ -2314,6 +2314,20 @@ class Smasher:
                 self._save_cd_cache()   # КД целей → в файл (переживёт перезапуск, не долбит после старта)
                 if await self._maybe_human_break() == "stop":
                     break
+            except asyncio.CancelledError:
+                # Запрос к Telegram ОТМЕНЁН (переподключение при обрыве). CancelledError —
+                # это BaseException, его НЕ ловит `except Exception` ниже → раньше он ПРОБИВАЛ
+                # наверх и УБИВАЛ смашер (graceful-выход без лога, ~1-4 мин). Теперь ловим,
+                # переподключаемся и продолжаем — как обычный обрыв связи.
+                log("  📡 запрос к Telegram отменён (переподключение) — продолжаю, не останавливаюсь.")
+                try:
+                    if not self.c.is_connected():
+                        await self.c.connect()
+                except Exception:
+                    pass
+                if await self.sleep_gated(5) == "stop":
+                    break
+                continue
             except Exception as e:
                 # ДУБЛЬ-IP (VPN сменил IP на ходу) — НЕ умираем, а переподключаемся.
                 # Часто транзиентно; раньше бот тут просто вставал (боль Ксюши).
