@@ -865,22 +865,36 @@ class Smasher:
         if now - self._remote_last_poll < 8:
             return
         self._remote_last_poll = now
+        # Чтение «Избранного» может споткнуться о битую анимацию @holop (TypeNotFoundError,
+        # конструктор 9815cec8) в потоке апдейтов — как и recent(). Обходим окнами поменьше.
+        msgs = None
+        for lim in (6, 3, 1):
+            try:
+                msgs = await self._net(lambda: self.c.get_messages("me", limit=lim))
+                break
+            except asyncio.CancelledError:
+                return   # отмена при переподключении — не валим бота, повторим позже
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                if type(e).__name__ == "TypeNotFoundError":
+                    await rsleep(0.4)
+                    continue   # битый TL-объект — пробуем окно поменьше
+                return   # прочий сбой — пропускаем этот опрос
+        if not msgs:
+            return
         try:
-            msgs = await self._net(lambda: self.c.get_messages("me", limit=6))
-            for m in sorted(msgs or [], key=lambda x: x.id):
+            for m in sorted(msgs, key=lambda x: x.id):
                 if m.id <= self._remote_last_id:
                     continue
                 self._remote_last_id = m.id
                 await handle_remote_command(self, m.message or "")
         except asyncio.CancelledError:
-            # get_messages/send отменился при переподключении. CancelledError — это
-            # BaseException, его НЕ ловит `except Exception` → раньше он ПРОБИВАЛ наверх
-            # и УБИВАЛ смашер (graceful-выход без лога). Ловим и просто пропускаем опрос.
             return
         except Exception as e:
             if _is_dead_session(e):
                 raise
-            log(f"  ⚠️ удалёнка (опрос) сбой: {type(e).__name__}: {e}")
+            log(f"  ⚠️ удалёнка (команда) сбой: {type(e).__name__}")
 
     async def remote_init(self):
         """При старте: запомнить текущий хвост Избранного (старое не исполняем) + прислать помощь."""
