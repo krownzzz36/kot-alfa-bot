@@ -508,7 +508,8 @@ class Smasher:
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
         self._holop_guard = True      # 🚨 авто-отбой угона холопа (выкуп/защита), галочка, деф ВКЛ
         self._theft_done = set()      # id обработанных уведомлений угона (не зациклиться)
-        self._last_theft_scan = 0.0   # когда последний раз сканировали угон внутри прохода
+        self._last_theft_scan = 0.0   # когда последний раз сканировали угон (throttle)
+        self._theft_busy = False      # идёт отбой угона/бочки — не запускать вложенный (реентранси-гард)
         self._remote_on = bool(cfg.get("remote_control", True))   # 🎮 удалёнка через «Избранное»
         self._remote_last_id = 0      # id последнего обработанного сообщения-команды
         self._remote_last_poll = 0.0  # троттл опроса Избранного
@@ -772,6 +773,9 @@ class Smasher:
 
     async def pause(self):
         await asyncio.sleep(random.uniform(self.lo, self.hi))
+        # 🚨 угон холопа может прийти в ЛЮБОЙ момент (окно ~10с) — ловим прямо в паузе между
+        # действиями, а не только между целями. Гард `_theft_busy` + throttle 4с внутри тика.
+        await self._theft_guard_tick()
 
     async def inter_hit(self):
         await asyncio.sleep(random.uniform(self.s["inter_hit_lo"], self.s["inter_hit_hi"]))
@@ -1064,6 +1068,7 @@ class Smasher:
             st = self.control_state()
             if st != "run":
                 return st
+            await self._theft_guard_tick()   # 🚨 ловим угон холопа и во время снов/наплывов
             await asyncio.sleep(min(3, end - time.time()))
         return "run"
 
@@ -2046,9 +2051,11 @@ class Smasher:
             return False
         if not mined:
             return False
+        self._theft_busy = True   # гард: во время разминирования не влезать в отбой угона из пауз
         try:
             await self.handle_bomb(mined)
         finally:
+            self._theft_busy = False
             self._bomb_done.add(mined.id)
             if len(self._bomb_done) > 300:
                 self._bomb_done = set(sorted(self._bomb_done)[-150:])
@@ -2111,9 +2118,11 @@ class Smasher:
             return False
         if not notif:
             return False
+        self._theft_busy = True   # гард: пока отбиваем — паузы/сны не запускают вложенный отбой
         try:
             await self.handle_holop_theft(notif)
         finally:
+            self._theft_busy = False
             # пометить ВСЕ текущие сообщения гонки обработанными — чтобы не зацикливаться на старом
             try:
                 for m in await self.recent(12):
@@ -2127,11 +2136,13 @@ class Smasher:
         return True
 
     async def _theft_guard_tick(self):
-        """Проверка угона холопа между целями — чаще бочки (гонка тугая, окно ~23с)."""
-        if not self._holop_guard:
+        """Быстрая проверка угона холопа — зовётся из КАЖДОЙ паузы/сна/между целями, чтобы
+        отклик был ~мгновенным (окно кражи может быть всего ~10с, напр. зелье жаб). Гард
+        `_theft_busy` — не запускать вложенно во время отбоя угона/бочки (реентранси)."""
+        if not self._holop_guard or self._theft_busy:
             return False
         now = time.time()
-        if now - self._last_theft_scan < 8:
+        if now - self._last_theft_scan < 4:
             return False
         self._last_theft_scan = now
         try:
