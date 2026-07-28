@@ -484,6 +484,7 @@ class Smasher:
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
         self._bomb_defense = True     # 🛡️ защищаться от бочек во время набегов (галочка, деф ВКЛ)
         self._defense_only = False    # 🛡️ режим ТОЛЬКО защита от бочек: не фармим, только сторожим бочку
+        self._bomb_gold_kazna = True  # после взрыва брать золото на защиту из казны, если на балансе мало
         # ВАЖНО: только ТЕПЕРЬ, когда все флаги проинициализированы, читаем настройки
         # из панели. Раньше вызов стоял ВЫШЕ и блок состояния затирал флаги обратно в
         # False — из-за этого на старте не работал авто-реген (реген оставался 1.0 м/HP).
@@ -581,6 +582,7 @@ class Smasher:
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
         self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
+        self._bomb_gold_kazna = bool(data.get("bomb_gold_kazna", getattr(self, "_bomb_gold_kazna", True)))
         was_hunt = getattr(self, "_free_hunt", False)
         self._free_hunt = bool(data.get("free_hunt", getattr(self, "_free_hunt", False)))
         if self._free_hunt and not was_hunt:
@@ -1890,8 +1892,9 @@ class Smasher:
     # Максим: «оно на кармане должно быть, казна создаёт ошибки»). Серебро 100k — с ретраями
     # («жать, пока не снимется» — игровой баг). В конце проверяем, что территория не «взорвана».
     async def recover_after_explosion(self):
-        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙 из казны) → защищаю всех "
-                       "холопов (золото С БАЛАНСА, в казну не лезу).")
+        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙) → защищаю всех холопов "
+                       "(золото с баланса; мало — {}).".format(
+                           "снимаю из казны" if self._bomb_gold_kazna else "казну НЕ трогаю"))
         ok_heal = await self.heal_territory()
         ok_prot = await self.protect_all_holops()
         self._bomb_log("  🏁 Восстановление — лечение: {}, защита: {}.".format(
@@ -1984,10 +1987,52 @@ class Smasher:
         self._bomb_log("  ⚠️ территорию вылечить не удалось за 4 попытки — проверь вручную.")
         return False
 
+    async def _withdraw_gold(self, amount):
+        """Снять `amount` золота из казны. Аварийный вид (взрыв): «Снять золото» → сумма.
+        Обычный: «Золото (5%/день)» → «Снять» → сумма. Сумму задаём через «Ввести сумму»
+        (надёжнее пресетов «10%», которых в аварийной казне нет)."""
+        amount = int(max(1, amount))
+        for _ in range(2):
+            await self.send("Личная казна")
+            km = await self._wait_msg(lambda m: any(w in (m.message or "").lower()
+                                                    for w in ("казна", "депозит", "снятие", "взорвана"))
+                                      and self.flat_buttons(m))
+            if not km:
+                await rsleep(1.2)
+                continue
+            opened = False
+            if await self._click_sub(km, "снять золото", label="Снять золото (аварийно)"):
+                opened = True
+            elif await self._click_sub(km, "золото", label="Золото (5%/день)"):
+                snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
+                opened = bool(snyat and await self._click_sub(snyat, "снять", label="Снять"))
+            if not opened:
+                await rsleep(1.0)
+                continue
+            scr = await self._wait_msg(lambda m: self._has(m, "ввести") or self._has(m, "снять") or self._has(m, "%"))
+            if scr:
+                if await self._click_sub(scr, "ввести", label="Ввести сумму"):
+                    await rsleep(0.6)
+                    await self.send(str(amount))
+                    await rsleep(1.2)
+                    self._bomb_log(f"  🏦 Снял {amount} золота из казны на защиту холопов.")
+                    return True
+                for preset in ("снять всё", "50%", "25%"):   # запасной вариант, если «Ввести сумму» нет
+                    if await self._click_sub(scr, preset, label=preset):
+                        await rsleep(1.2)
+                        self._bomb_log(f"  🏦 Снял золото из казны ({preset}).")
+                        return True
+                self._bomb_log("  ⚠️ экран снятия золота — не нашёл ни «Ввести сумму», ни пресетов. Сырые: "
+                               + " | ".join(bt for _, _, bt in self.flat_buttons(scr)))
+            await rsleep(1.2)
+        return False
+
     async def protect_all_holops(self):
-        """Защитить ВСЕХ холопов золотом С БАЛАНСА (в казну за золотом НЕ лезем — Максим).
-        Подтверждение — из АЛЕРТА. Ретраим (игровой баг «жать несколько раз»)."""
-        for attempt in range(4):
+        """Защитить ВСЕХ холопов. Золото сперва С БАЛАНСА; если мало и включена галочка
+        «брать золото из казны» — снимаем недостающее из казны (для тех, кто держит золото
+        в депозите, как Владимир). Подтверждение — из АЛЕРТА. Ретраим (баг мультиклика)."""
+        withdrew = False
+        for attempt in range(5):
             await self.send("Холопы")
             hub = await self._wait_msg(lambda m: self._has(m, "холопы ("))
             if not (hub and await self._click_sub(hub, "холопы (", label="список холопов")):
@@ -2001,18 +2046,33 @@ class Smasher:
             p = self._btn_pos(lst, "защитить всех", skip_star=True)
             if not p:
                 return False
+            cost = parse_amount(p[2]) or 0
+            # хватает ли золота на балансе? если нет и разрешено — снять из казны (один раз)
+            if cost and self._bomb_gold_kazna and not withdrew:
+                gold, _ = await self.my_balance()
+                if gold < cost:
+                    self._bomb_log(f"  🏦 на балансе золота {gold} < нужно {cost} — снимаю из казны.")
+                    await self._withdraw_gold(cost + 3000)
+                    withdrew = True
+                    continue   # заново открыть список холопов со свежим балансом
             res = await self.click(lst, p[0], p[1], label=p[2])
             alert = self._alert_text(res).lower()
             if "установлен" in alert or "потрачено" in alert:
-                self.stats["spent_gold"] += parse_amount(p[2]) or 0
+                self.stats["spent_gold"] += cost
                 self._bomb_log(f"  🛡️ Защита установлена ({self._alert_text(res).strip()}).")
                 return True
-            self._bomb_log(f"  ↻ защита не подтвердилась (попытка {attempt + 1}/4)"
+            # нехватка золота по алерту → снять из казны и повторить
+            if any(w in alert for w in ("недостаточно", "не хватает", "мало")) and self._bomb_gold_kazna and not withdrew:
+                self._bomb_log("  🏦 алерт: мало золота — снимаю из казны и повторяю.")
+                await self._withdraw_gold((cost or 5000) + 3000)
+                withdrew = True
+                continue
+            self._bomb_log(f"  ↻ защита не подтвердилась (попытка {attempt + 1}/5)"
                            + (f", алерт: «{self._alert_text(res).strip()}»" if self._alert_text(res) else "")
                            + ". Пробую ещё.")
             await rsleep(1.5)
-        self._bomb_log("  ⚠️ защиту холопов подтвердить не удалось. Проверь, что золото есть на балансе "
-                       "(бот в казну за золотом не лезет — держи золото на кармане).")
+        self._bomb_log("  ⚠️ защиту холопов подтвердить не удалось. Проверь золото (на балансе или в казне) "
+                       "и галочку «брать золото из казны».")
         return False
 
     def heartbeat(self):
@@ -2252,11 +2312,15 @@ class Smasher:
             # ОЦЕНИВАЕМ HP по времени и скорости регена. Просыпаемся при этом часто —
             # но лишь для проверки бочки (чтение ленты, не команда игре).
             est = (self._heal_from_hp or 0) + (now - self._heal_from_t) / max(1.0, s["min_per_hp"] * 60)
-            do_read = (self._heal_from_t == 0.0) or (now - self._last_hp_read >= 240) or (est >= s["my_recover_to"])
+            # интервал между чтениями HP — ШИРОКО РАНДОМНЫЙ (3–8 мин), не машинно-ровный
+            # (Максим: «разброс не ±20с, а вообще разный диапазон, 3–10 мин»).
+            gap = getattr(self, "_hp_read_gap", 0.0) or random.uniform(180, 480)
+            do_read = (self._heal_from_t == 0.0) or (now - self._last_hp_read >= gap) or (est >= s["my_recover_to"])
             hp = None
             if do_read:
                 hp = await self.my_current_hp()
                 self._last_hp_read = now
+                self._hp_read_gap = random.uniform(180, 480)   # следующий интервал — новый рандом
                 if hp is not None:
                     self._heal_from_hp, self._heal_from_t, est = hp, now, hp
             cur = hp if hp is not None else est

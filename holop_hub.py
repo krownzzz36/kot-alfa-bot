@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.28-26"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.28-27"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -620,7 +620,8 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "auto_oboz": False, "war_mode": False, "human_mode": False,
                            "notify_dm": False, "free_hunt": False,
                            "req_delay_lo": 1.5, "req_delay_hi": 3.5,
-                           "bomb_defense": True, "defense_only": False}
+                           "bomb_defense": True, "defense_only": False,
+                           "bomb_gold_kazna": True}
 
 
 def load_smash_settings():
@@ -662,6 +663,7 @@ def save_smash_settings(body):
         out["req_delay_lo"], out["req_delay_hi"] = round(lo, 1), round(hi, 1)
         out["bomb_defense"] = bool(body.get("bomb_defense", cur["bomb_defense"]))
         out["defense_only"] = bool(body.get("defense_only", cur["defense_only"]))
+        out["bomb_gold_kazna"] = bool(body.get("bomb_gold_kazna", cur["bomb_gold_kazna"]))
     except (TypeError, ValueError):
         return False
     try:
@@ -1368,6 +1370,7 @@ function render(mid){
             ${swHTML('set_hit_shields','🏹 Сносить донат-щит требушетом и фармить (выкл — беречь требушеты)')}
             ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
             ${swHTML('set_bomb_defense','💣 Защита от бочек (разминировать + восстановить после взрыва) — держать ВКЛ')}
+            ${swHTML('set_bomb_gold_kazna','🏦 После взрыва брать золото на защиту холопов из казны, если на балансе мало')}
             ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
             ${swHTML('set_human','🧑 Человеческий режим — иногда «отходить» на 8–30 мин (дополнение, не замена ночному фарму)')}
@@ -1528,6 +1531,7 @@ async function loadSettings(){
     const bg=$('#set_bank_gold'); if(bg) bg.checked=!!d.bank_gold;
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
     const bd=$('#set_bomb_defense'); if(bd) bd.checked=(d.bomb_defense!==false);
+    const bgk=$('#set_bomb_gold_kazna'); if(bgk) bgk.checked=(d.bomb_gold_kazna!==false);
     const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
     const wm=$('#set_war'); if(wm) wm.checked=!!d.war_mode;
     const hm=$('#set_human'); if(hm) hm.checked=!!d.human_mode;
@@ -1551,6 +1555,7 @@ async function saveSettings(){
     bank_gold:!!($('#set_bank_gold')||{}).checked,
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
     bomb_defense:!!($('#set_bomb_defense')||{}).checked,
+    bomb_gold_kazna:!!($('#set_bomb_gold_kazna')||{}).checked,
     free_hunt:!!($('#set_free_hunt')||{}).checked,
     war_mode:!!($('#set_war')||{}).checked,
     human_mode:!!($('#set_human')||{}).checked,
@@ -1590,6 +1595,7 @@ const GUIDE_SECTIONS=[
    <p><b>🧱 Пробивать ров/частокол</b> — бить сквозь них (иначе пропускать защищённых). <b>🏹 Сносить донат-щит требушетом</b> — фармить щитников за требушеты (выкл — беречь требушеты).</p>
    <p><b>🐴 Авто-обоз</b> — покупает обоз «+50% серебра с набегов на 50 мин» за золото (собирает с холопов / из казны). Срок хранит в файле, лишний раз в магазин не лезет.</p>
    <p><b>💣 Защита от бочек</b> — пока бот работает и галочка включена, он сам следит за бочками (динамитом). Прилетела бочка → жмёт <b>Огниво</b>, потом <b>красный фитиль</b>. Угадал (шанс 1/3) — территория цела. Не угадал и рвануло — бот сам <b>лечит территорию</b> (100 000🪙 из казны) и <b>ставит охрану всем холопам</b> (10% золота из казны), лишнее возвращает в депозит. <b>Огниво держи в запасе (10–20 шт.)</b> — бот его не покупает, ⭐-варианты (Мастер, 25⭐) не трогает. Отдельная вкладка <b>«🛡️ Защита от бочек»</b> — режим «только сторожу, не фармлю»: включаешь и бот просто караулит бочки, ничего не атакуя.</p>
+   <p><b>🏦 Брать золото на защиту из казны</b> — на защиту холопов после взрыва нужно золото. Если держишь золото на балансе (на кармане) — оставь выкл, бот возьмёт оттуда. Если сгружаешь золото в казну (депозит) — включи, и бот сам снимет недостающее из казны. По умолчанию включено.</p>
    <p><b>🔔 Слать мне в Избранное</b> — важные события (бочка/лечение) прилетают тебе личным сообщением в «Избранное» Telegram. Узнаёшь сразу, даже не открывая пульт. <b>По умолчанию выключено</b> — включи галочкой, если хочешь уведомления.</p>
    <p><b>🧑 Человеческий режим</b> — бот иногда «отходит» на 8–30 минут, чтобы активность не была машинно-ровной сутками (менее палевно). Это ДОПОЛНЕНИЕ, не замена — фармить продолжает, в том числе ночью. По умолчанию выключен.</p>
    <p><b>⚔️ РЕЖИМ ВОЙНЫ</b> — бьёт по КД почти без пауз, держит цели прижатыми. <b>Палевно</b> (много запросов к игре) — включать под конкретный замес, не сутками.</p>`],
