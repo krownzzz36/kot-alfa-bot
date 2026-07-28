@@ -2173,6 +2173,31 @@ class Smasher:
                 self._theft_done = set(sorted(self._theft_done)[-150:])
         return True
 
+    async def _protect_won_holop(self, name_s, deadline):
+        """Дожать «Защитить» на уже НАШЕМ холопе (после Волхва перекупа не будет — можно
+        спокойно выждать окно 23с и поставить охрану на 24ч). True, если охрана встала."""
+        while time.time() < deadline:
+            m = self._theft_latest(await self.recent(8))
+            if not m or THEFT_BOUGHT not in (m.message or "").lower():
+                return False   # экран уже не «выкуплен» — нечего защищать
+            p = self._btn_pos(m, THEFT_PROTECT_BTN)
+            if not p:
+                return False
+            res = await self.click(m, p[0], p[1], label=f"охрана {name_s}")
+            alert = (self._alert_text(res) or "").lower()
+            if "охрана установлена" in alert or "защищена" in alert or "под охран" in alert:
+                self.stats["saved_holops"] = self.stats.get("saved_holops", 0) + 1
+                return True
+            if "подожди" in alert:
+                sec = re.search(r"(\d+)\s*сек", alert)
+                wait = int(sec.group(1)) if sec else 20
+                log(f"  ⏱ Охрана «{name_s}» ещё рано ({wait}с) — жду (Волхв, перекупа не будет).")
+                end = time.time() + wait + 1
+                while time.time() < end and time.time() < deadline:
+                    await rsleep(3)
+                continue
+            return False   # иной алерт — не смогли
+
     async def handle_holop_theft(self, first):
         name = re.search(r"Холоп:\s*([^\n]+)", first.message or "")
         name_s = name.group(1).strip() if name else "?"
@@ -2202,8 +2227,13 @@ class Smasher:
             # ── ВОЛХВ: гонка закрыта (перехват невозможен) ──
             if VOLHV_WORD in prof_s or VOLHV_WORD in low:
                 if THEFT_BOUGHT in low:
-                    log(f"  👑 ВОЛХВ — «{name_s}» закреплён за МНОЙ, перехват невозможен. Победа!")
+                    log(f"  👑 ВОЛХВ — «{name_s}» закреплён за МНОЙ (перехват невозможен). Ставлю охрану…")
                     won = True
+                    # Волхв = соперник больше не перекупит → спокойно дожимаем ОХРАНУ (ждём окно 23с)
+                    if await self._protect_won_holop(name_s, time.time() + 60):
+                        log(f"  🛡️ «{name_s}» — охрана установлена. Полная победа!")
+                    else:
+                        log(f"  👑 «{name_s}» закреплён Волхвом (охрану доставить не удалось, но перехват невозможен).")
                 else:
                     log(f"  💀 ВОЛХВ у соперника — «{name_s}» потерян (перехватить нельзя).")
                 break
