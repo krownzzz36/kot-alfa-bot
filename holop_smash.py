@@ -409,6 +409,15 @@ def target_positions(flat_buttons):
     return out
 
 
+def search_query(name):
+    """Чистое ядро имени для ПОИСКА в игре: убрать эмодзи/значки клана-титула-декора,
+    оставить буквы/цифры/пробелы. Игра ищет по ядру («Дубай»), а не по «❤️ Дубай🗿».
+    Свободная охота брала имя цели с арены С эмодзи и слала его в поиск → «нет совпадения».
+    Для чистых имён из списка (Дубай) возвращает их же — безопасно для всех вызовов."""
+    s = re.sub(r"[^0-9A-Za-zА-Яа-яЁё ]+", " ", name or "")
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def fmt_secs(s):
     s = int(max(0, s))
     if s >= 3600:
@@ -1549,7 +1558,7 @@ class Smasher:
         if not await self.press_search():
             return None
         await self.wait_text(SEARCH_PROMPT, tries=8)
-        await self.send(name)
+        await self.send(search_query(name) or name)   # искать по чистому ядру (без эмодзи)
         want = norm(name)
         for _ in range(16):
             for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
@@ -1579,7 +1588,7 @@ class Smasher:
         if not terr or not await self.click_text(terr, "Найти", label="Найти"):
             return None
         await self.wait_text(FIND_PROMPT, tries=8)
-        await self.send(name)
+        await self.send(search_query(name) or name)   # искать по чистому ядру (без эмодзи)
         want = norm(name)
         lst = None
         for _ in range(14):

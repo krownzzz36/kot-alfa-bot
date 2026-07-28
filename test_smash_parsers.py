@@ -76,6 +76,14 @@ check("бочка: ВЗРЫВ НЕ ловится как успех («непр�
 check("бочка: успех распознаётся как обезврежено", any(w in OKD for w in DEFUSED_WORDS), True)
 check("бочка: успех НЕ ловится как взрыв", any(w in OKD for w in EXPLODED_WORDS), False)
 
+# ── ПОИСКОВОЕ ЯДРО ИМЕНИ (регресс: свободная охота слала имя С эмодзи → «нет совпадения») ──
+from holop_smash import search_query
+check("поиск: убрать эмодзи клана/декора", search_query("❤️ Дубай🗿"), "Дубай")
+check("поиск: имя с пробелом сохраняется", search_query("🦅 Кроличье Царство🐇"), "Кроличье Царство")
+check("поиск: несколько эмодзи по краям", search_query("🐉 Озимандия🐲 🕳️"), "Озимандия")
+check("поиск: латиница не трогается", search_query("rmtIsland"), "rmtIsland")
+check("поиск: чистое имя из списка без изменений", search_query("Миру мир"), "Миру мир")
+
 print()
 if _fails:
     print(f"❌ ПРОВАЛЕНО: {len(_fails)} — {', '.join(_fails)}")
