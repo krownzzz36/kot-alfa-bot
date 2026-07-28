@@ -448,6 +448,9 @@ class Smasher:
         self.next_ok = self._load_cd_cache()   # имя -> epoch, когда цель снова доступна (из файла)
         self._cd_saved_at = 0.0
         self._shielded = self._load_shielded()  # ник -> epoch спадения щита (парковка щитовиков)
+        self.oko_hits_path = os.path.join(HERE, "oko_hits.txt")  # 🔥 Око Саурона: ники, которых «пнули» из панели
+        self._oko_prio = []      # очередь приоритетных ударов из Ока (боевой режим)
+        self._sauron = False     # 🔥 режим Саурона: зловещие реплики кота (пасхалка, тумблер в панели)
         self.stats = {"hits": 0, "wins": 0, "blocked": 0, "loss": 0, "loot": 0, "rep": 0.0}
         self._paused_note = False
         self._last_heartbeat = 0.0
@@ -591,6 +594,54 @@ class Smasher:
             log(f"  🛡️→⚔️ {n}: щит спал — снова в набегах.")
         self._save_shielded()
 
+    def _read_oko_hits(self):
+        """🔥 Око Саурона: прочитать и СРАЗУ очистить oko_hits.txt — ники, которых «пнули»
+        из панели. Чисто локально, без единого запроса к игре."""
+        try:
+            with open(self.oko_hits_path, encoding="utf-8") as f:
+                raw = [ln.strip() for ln in f if ln.strip()]
+        except OSError:
+            return []
+        if raw:
+            try:
+                open(self.oko_hits_path, "w", encoding="utf-8").close()   # съели — очистили файл
+            except OSError:
+                pass
+        seen, out = set(), []
+        for n in raw:                     # уникальные, сохраняя порядок нажатий
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        return out
+
+    async def _oko_sortie(self):
+        """🔥 Око Саурона: немедленно ударить по всем «пнутым» из панели. Зовётся МЕЖДУ целями
+        (как проверка бочки) → реакция ~30с, а не в конце длинного прохода. Возвращает число ударов."""
+        hits = self._read_oko_hits()
+        for n in hits:
+            log(f"  🔥 Око: немедленный удар по {n} (пнули из панели).")
+            self.next_ok[n] = 0.0
+            self._shielded.pop(n, None)
+            if n in self._oko_prio:
+                self._oko_prio.remove(n)
+            try:
+                await self.do_target(n)
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"  ⚠️ Око-удар по {n} сбой: {type(e).__name__}: {e}")
+        return len(hits)
+
+    def _sauron_roar(self, name, loot):
+        """Зловещая реплика Саурона после победы (только когда режим включён — пасхалка)."""
+        if not self._sauron:
+            return
+        roars = [f"  👁 {name} ПОКОРЁН. Так будет с каждым.",
+                 f"  🔥 {name} повержен предо мной. Мордор растёт.",
+                 f"  💀 {name} склонился. Кольцо ближе.",
+                 f"  👁 Око узрело {name}. Сопротивление тщетно."]
+        log(random.choice(roars))
+
     def apply_live_settings(self):
         """Подхватить настройки боя из панели (smash_settings.json) — применяется на лету."""
         try:
@@ -630,6 +681,12 @@ class Smasher:
         self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
         self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
         self._bomb_gold_kazna = bool(data.get("bomb_gold_kazna", getattr(self, "_bomb_gold_kazna", True)))
+        was_sauron = getattr(self, "_sauron", False)
+        self._sauron = bool(data.get("sauron_mode", was_sauron))   # 🔥 режим Саурона (пасхалка)
+        if self._sauron and not was_sauron:
+            log("🔥👁 ОКО ОБРАЩЕНО. Кот стал Сауроном — Мордор пробуждается.")
+        elif was_sauron and not self._sauron:
+            log("👁 Око закрылось. Кот снова просто кот.")
         was_hunt = getattr(self, "_free_hunt", False)
         self._free_hunt = bool(data.get("free_hunt", getattr(self, "_free_hunt", False)))
         if self._free_hunt and not was_hunt:
@@ -1682,6 +1739,7 @@ class Smasher:
                 self.stats["wins"] += 1
                 self.stats["loot"] += loot
                 log(f"  ⚔️ {name}: ПОБЕДА +{loot:,}🪙, КД {fmt_secs(cd)}".replace(",", " "))
+                self._sauron_roar(name, loot)   # 🔥 зловещая реплика, если режим Саурона включён
             elif outcome == "blocked":
                 self.stats["blocked"] += 1
                 log(f"  🧱 {name}: частокол/ров — бьём насквозь, КД {fmt_secs(cd)}")
@@ -2514,6 +2572,9 @@ class Smasher:
             return None
         # ═══ СПОКОЙНЫЙ РЕЖИМ (только защита): дальше — БОЕВОЕ, его пропускаем ═══
         if self._defense_only:
+            # 🔥 ОКО САУРОНА: набеги не активны → «пнуть» = немедленный вылет, потом снова сторожим
+            if await self._oko_sortie():
+                return None
             return await self.sleep_gated(random.uniform(20, 40))
         # 🐴 АВТО-ОБОЗ (+50% серебра С НАБЕГОВ — только боевой режим). Сверяется с файлом.
         if self._auto_oboz:
@@ -2602,8 +2663,17 @@ class Smasher:
 
         now = time.time()
         self._return_expired_shields()   # локально: у кого щит спал — вернуть в бой (без запросов)
-        # цель доступна, если не на КД И не запаркована под щитом
-        eligible = [t for t in active if self.next_ok.get(t, 0.0) <= now and not self._is_parked(t)]
+        # 🔥 ОКО САУРОНА: кого «пнули» из панели — приоритетный удар (снимаем КД/парковку, ставим первым)
+        for n in self._read_oko_hits():
+            if n in active and n not in self._oko_prio:
+                self.next_ok[n] = 0.0
+                self._shielded.pop(n, None)
+                self._oko_prio.insert(0, n)
+                log(f"  🔥 Око: {n} — приоритетный удар, ставлю первым в проходе.")
+        # цель доступна, если не на КД И не запаркована под щитом; пнутые — впереди
+        prio = [t for t in self._oko_prio if t in active]
+        eligible = prio + [t for t in active
+                           if t not in prio and self.next_ok.get(t, 0.0) <= now and not self._is_parked(t)]
         if not eligible:
             # цель свободна, когда прошли И КД, И щит → берём max по каждой, min по всем
             soonest = min(max(self.next_ok.get(t, 0.0), self._shielded.get(t, 0.0)) for t in active)
@@ -2622,7 +2692,10 @@ class Smasher:
             await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее набега — обработали, прерываем проход
+            await self._oko_sortie()   # 🔥 Око: пнули из панели → бьём немедленно, между целями
             my_after = await self.do_target(t)
+            if t in self._oko_prio:
+                self._oko_prio.remove(t)     # 🔥 пнутую отработали — снимаем с приоритета
             self._last_hit_name = t          # запомнили позицию — после лечения продолжим отсюда
             if isinstance(my_after, int) and my_after <= s["my_min_hp"]:
                 log(f"🩸 После удара мои HP {my_after} ≤ {s['my_min_hp']} — прерываю проход на лечение "
@@ -2635,6 +2708,7 @@ class Smasher:
         """Один проход свободной охоты: набрать слабейших по защите с арены и отдубасить
         их обычным do_target() (лечение/статистика/КД/ров-частокол — всё как в списке)."""
         s = self.s
+        await self._oko_sortie()   # 🔥 Око: пнутых бьём сразу (в охоте нет постоянного списка)
         names = await self.pick_hunt_names(arena)
         if not names:
             nap = WAR_NAP_CAP if self._war_mode else 90.0
@@ -2649,6 +2723,7 @@ class Smasher:
             await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее охоты — обработали, прерываем проход
+            await self._oko_sortie()   # 🔥 Око: пнули из панели → бьём немедленно, между целями
             my_after = await self.do_target(t)
             self._last_hit_name = t
             if isinstance(my_after, int) and my_after <= s["my_min_hp"]:

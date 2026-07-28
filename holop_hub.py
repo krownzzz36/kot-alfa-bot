@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.28-38"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.28-39"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -329,6 +329,10 @@ MODULES = [
         "desc": "Спокойный режим: не фармит, но делает безопасное — сторожит бочки, казна, охрана холопов.",
     },
     {
+        "id": "oko", "title": "Око Саурона", "emoji": "🔥", "kind": "oko",
+        "desc": "Мордор следит. Вписывай ников — Око покажет их живьём (HP/щит/КД) и даст «пнуть». Данные локальные, без запросов к игре.",
+    },
+    {
         "id": "roles", "title": "Роли холопов", "emoji": "🎭", "kind": "oneshot",
         "script": "holop_reroll.py", "log": "hub_roles.out",
         "desc": "Перегон холопа в нужную профессию (крутит выгнать→захватить).",
@@ -621,7 +625,8 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "notify_dm": False, "free_hunt": False,
                            "req_delay_lo": 1.5, "req_delay_hi": 3.5,
                            "bomb_defense": True, "defense_only": False,
-                           "bomb_gold_kazna": True, "auto_guard": False}
+                           "bomb_gold_kazna": True, "auto_guard": False,
+                           "sauron_mode": False}
 
 
 def load_smash_settings():
@@ -665,6 +670,7 @@ def save_smash_settings(body):
         out["defense_only"] = bool(body.get("defense_only", cur["defense_only"]))
         out["bomb_gold_kazna"] = bool(body.get("bomb_gold_kazna", cur["bomb_gold_kazna"]))
         out["auto_guard"] = bool(body.get("auto_guard", cur["auto_guard"]))
+        out["sauron_mode"] = bool(body.get("sauron_mode", cur["sauron_mode"]))   # 🔥 режим Саурона
     except (TypeError, ValueError):
         return False
     try:
@@ -843,6 +849,102 @@ def status_board():
     return {"rows": rows, "summary": summary, "raids": raids_state()}
 
 
+# ─────────────── 🔥 ОКО САУРОНА ───────────────
+# Живое состояние целей ТОЛЬКО из локальных файлов кота (0 запросов к игре):
+# cd_cache.json (КД), shielded.json (щит), smash.log (последние HP/защита/уровень).
+OKO_HP_RX = re.compile(r"HP\s*(\d+),\s*защ\.→\s*(\d+),\s*ур\.(\d+)")
+
+
+def load_oko_targets():
+    try:
+        with open(path("oko_targets.txt"), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def save_oko_targets(text):
+    try:
+        with open(path("oko_targets.txt"), "w", encoding="utf-8") as f:
+            f.write(text or "")
+        return True
+    except OSError:
+        return False
+
+
+def oko_hit(name):
+    """«Пнуть» — дописать ник в oko_hits.txt; смашер подхватит (приоритет/немедленно)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    try:
+        with open(path("oko_hits.txt"), "a", encoding="utf-8") as f:
+            f.write(name + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def oko_set_sauron(on):
+    """Тумблер режима Саурона — пишем в настройки боя, смашер подхватит на лету."""
+    s = load_smash_settings()
+    s["sauron_mode"] = bool(on)
+    return save_smash_settings(s)
+
+
+def oko_cards(nicks):
+    now = time.time()
+    try:
+        with open(path("cd_cache.json"), encoding="utf-8") as f:
+            cd = (json.load(f).get("next_ok") or {})
+    except (OSError, ValueError, TypeError):
+        cd = {}
+    try:
+        with open(path("shielded.json"), encoding="utf-8") as f:
+            sh = json.load(f)
+    except (OSError, ValueError, TypeError):
+        sh = {}
+    try:
+        with open(path("smash.log"), encoding="utf-8", errors="replace") as f:
+            lines = [ln for ln in f if "\\x" not in ln]
+    except OSError:
+        lines = []
+    cards = []
+    for name in nicks:
+        cd_until = float(cd.get(name) or 0)
+        sh_until = float(sh.get(name) or 0)
+        hp = lvl = dfn = None
+        state, when = "", ""
+        for ln in reversed(lines):
+            if (name + ":") in ln:
+                m = OKO_HP_RX.search(ln)
+                if m:
+                    hp, dfn, lvl = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                for rx, tmpl in STATE_PATTERNS:
+                    mm = rx.search(ln)
+                    if mm:
+                        state = tmpl.format(*[g.strip() for g in mm.groups()]) if mm.groups() else tmpl
+                        break
+                tm = ln.split("  ", 1)[0]
+                when = tm[11:19] if len(tm) >= 19 else ""
+                break
+        cards.append({"name": name, "hp": hp, "level": lvl, "defense": dfn,
+                      "cd_until": cd_until, "shield_until": sh_until,
+                      "open": cd_until <= now and sh_until <= now,
+                      "state": state, "when": when})
+    s = load_smash_settings()
+    return {"cards": cards, "now": now,
+            "running": is_running("raids"),
+            "defense_only": bool(s.get("defense_only")),
+            "sauron": bool(s.get("sauron_mode"))}
+
+
+def oko_cards_saved():
+    nicks = [x.split("#", 1)[0].strip()
+             for x in load_oko_targets().splitlines() if x.split("#", 1)[0].strip()]
+    return oko_cards(nicks)
+
+
 # ─────────────── HTTP ───────────────
 def ui_config():
     return [{k: m.get(k) for k in
@@ -894,6 +996,10 @@ class H(BaseHTTPRequestHandler):
             self._json(load_smash_settings())
         elif p == "/api/status_board":
             self._json(status_board())
+        elif p == "/api/oko/cards":
+            self._json(oko_cards_saved())
+        elif p == "/api/oko/targets":
+            self._send(200, load_oko_targets(), "text/plain; charset=utf-8")
         elif p.startswith("/api/") and p.endswith("/status"):
             mid = p.split("/")[2]
             mod = MOD.get(mid, {})
@@ -950,6 +1056,15 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 _log_auth_error(e)      # в auth_log.txt — чтобы прислать при проблемах входа
                 return self._json({"ok": False, "err": _auth_err(e)})
+        # ── 🔥 Око Саурона ──
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "oko":
+            act = parts[2]
+            if act == "save":
+                return self._json({"ok": save_oko_targets(raw if not body else body.get("text", ""))})
+            if act == "hit":
+                return self._json({"ok": oko_hit(body.get("name", ""))})
+            if act == "sauron":
+                return self._json({"ok": oko_set_sauron(bool(body.get("on")))})
         if len(parts) == 3 and parts[0] == "api":
             mid, action = parts[1], parts[2]
             if mid == "raids" and action == "start":
@@ -1298,6 +1413,7 @@ function swHTML(id,label){
 function render(mid){
   active=mid; if(timer) clearInterval(timer);
   if(window.GAME) GAME.stop();          // уходим со вкладки — глушим таймеры игры
+  if(window.OKO) OKO.stop();            // 🔥 глушим анимацию/опрос Ока
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.id===mid));
   const m=CFG.find(x=>x.id===mid); const main=$('#main');
   const head=`<div class="head">
@@ -1310,6 +1426,7 @@ function render(mid){
     pollStatus(); timer=setInterval(pollStatus,2000); return;
   }
   if(m.kind==='game'){ main.innerHTML=head+GAME.html(); GAME.start(); return; }
+  if(m.kind==='oko'){ main.innerHTML=head+OKO.html(); OKO.start(); return; }
   if(m.kind==='guide'){ main.innerHTML=head+GUIDE_HTML; return; }
   let ctl='';
   if(m.kind==='guard'){
@@ -1590,6 +1707,11 @@ const GUIDE_SECTIONS=[
    <p><b>🎯 Цели</b> — список ников (по одному в строке). Кого бот бьёт. Пусто — бот ждёт, никого не трогает.</p>
    <p><b>🛡️ Щитники — не бить</b> — ники, у кого донат-щит (Купол/Стена). Бот их пропустит и не потратит требушет. Бот и сам сюда дописывает, кого распознал в бою.</p>
    <p><b>🌙 Ночной режим</b> — держит Mac бодрым и сам перезапускает бота, если тот упал/завис. Для фарма на ночь.</p>`],
+ ['🔥','Око Саурона',`
+   <p><b>Живая доска целей в стиле Мордора.</b> Впиши ников (по одному в строке) и жми <b>🔥 Разжечь Око</b> — покажет карточки: HP, щит, кулдаун (тикают в реальном времени), уровень и защиту. Данные берутся <b>из локальных файлов кота — ни одного запроса к игре</b>, так что абсолютно не палевно.</p>
+   <p><b>🔥 Пнуть</b> — ударить по цели вне очереди. Если идут <b>Набеги</b> — цель бьётся <b>приоритетно</b> (первой, подхват между целями ~30 сек). Если бот в режиме <b>«только защита»</b> — <b>немедленный вылет</b> по ней. Работает, только пока кот запущен (Набеги или Защита) — иначе бить некому.</p>
+   <p><b>Карточка с огненной рамкой «⚔ ЦЕЛЬ ОТКРЫТА»</b> — щит спал и КД прошёл, можно бить прямо сейчас.</p>
+   <p><b>👁 Режим Саурона</b> — пасхалка: кот «перевоплощается», в журнале появляются зловещие реплики («ПОКОРЁН», «повержен предо мной»), пульт тлеет огнём. На фарм не влияет — чистый антураж. Выключается тем же тумблером.</p>`],
  ['🎛️','Набеги — Настройки боя',`
    <p><b>Воевать, пока HP выше</b> — если моё HP упало ниже, бот уходит лечиться. <b>Лечиться до HP</b> — до какого значения восстанавливаться.</p>
    <p><b>Реген: секунд на 1 HP</b> — скорость восстановления. Можно вписать вручную. Или включить <b>Авто-реген</b> — тогда бот сам считает по бонусам с Территории И <b>уточняет по факту</b> (замеряет реальное восстановление во время лечения). При левелапе пересчитает сам.</p>
@@ -1837,6 +1959,245 @@ async function init(){
    Цель: дожить до дня 20 или набить 1000 🪙, не доведя холопа до бунта.
    Ачивки копятся в браузере (localStorage) между забегами.
    ══════════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════════
+   🔥 ОКО САУРОНА — живая доска целей в стиле Мордора. Данные локальные (0 запросов).
+   ══════════════════════════════════════════════════════════════════════════ */
+const OKO = (function(){
+  let eyeTimer=null, pollTimer=null, tickTimer=null, cards=[], active=false, sauron=false, T=0;
+  function esc(s){return (s==null?'':(''+s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+  function fmt(sec){sec=Math.max(0,Math.floor(sec));
+    if(sec>=3600){const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60);return h+'ч '+(''+m).padStart(2,'0')+'м';}
+    const m=Math.floor(sec/60),s=sec%60;return m+':'+(''+s).padStart(2,'0');}
+
+  /* ── пиксельное Око (ImageData 64×80, масштаб пикселями) ── */
+  function drawEye(cv){
+    const W=64,H=80,ctx=cv.getContext('2d');
+    let img=ctx.createImageData(W,H),d=img.data;
+    const cx=31.5,cy=40, t=T;
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const i=(y*W+x)*4;
+      const dx=x-cx, dy=y-cy, nx=dx/23, ny=dy/35, rr=nx*nx+ny*ny;
+      // мерцающий шум пламени
+      const n=(Math.sin(x*12.9+y*4.7+t*3.1)*0.5+0.5)*(Math.sin(y*7.3-t*2.3+x*0.7)*0.5+0.5);
+      let r=0,g=0,b=0,a=0;
+      if(rr<1.0){                        // тело глаза — янтарная склера
+        const glow=1-rr;                 // ярче к центру
+        r=255; g=Math.round(120+110*glow); b=Math.round(20+40*glow); a=255;
+        // вертикальный зрачок-щель
+        const px=Math.abs(nx)/0.16, py=Math.abs(ny)/0.66;
+        if(px*px+py*py<1){
+          const core=1-(px*px+py*py);
+          const pulse=0.5+0.5*Math.sin(t*4);
+          r=Math.round(30+225*core*pulse); g=Math.round(10+90*core*pulse); b=0; a=255;
+          if(core<0.28){r=8;g=4;b=2;}    // чёрная кромка щели
+        }
+      } else if(rr<2.4){                  // огненный венец — языки пламени с мерцанием
+        const edge=(2.4-rr)/1.4;
+        const flame=edge*0.7+n*0.7;
+        if(flame>0.55){
+          a=Math.round(Math.min(255,(flame-0.5)*430));
+          r=255; g=Math.round(70+150*n); b=Math.round(15*n);
+        }
+      }
+      d[i]=r;d[i+1]=g;d[i+2]=b;d[i+3]=a;
+    }
+    ctx.putImageData(img,0,0);
+  }
+
+  /* ── пиксельный орк-аватар на карточке (статичный, seed из ника) ── */
+  function drawOrc(cv,name){
+    const ctx=cv.getContext('2d'),h=hash(name);
+    ctx.clearRect(0,0,14,15);
+    const skin=['#4b6b2e','#5c7a34','#3f5f2b','#6b7d2f'][h%4];
+    const dark='#2c421d', tusk='#e8e0c8', eye=['#ff3b1f','#ffd23b','#ff6a1f'][(h>>3)%3];
+    function px(x,y,c){ctx.fillStyle=c;ctx.fillRect(x,y,1,1);}
+    // голова (симметрично)
+    for(let y=2;y<=12;y++)for(let x=3;x<=10;x++){ if((x===3||x===10)&&(y<4||y>10))continue; px(x,y,skin);}
+    px(2,5,skin);px(2,6,skin);px(11,5,skin);px(11,6,skin);       // уши
+    for(let x=3;x<=10;x++)px(x,3,dark);                          // бровь
+    const ey=5+((h>>5)%2);
+    px(4,ey,eye);px(5,ey,eye);px(8,ey,eye);px(9,ey,eye);         // глаза
+    for(let x=5;x<=8;x++)px(x,10,dark);                          // рот
+    px(5,11,tusk);px(8,11,tusk);                                 // клыки
+  }
+
+  function timerHTML(c,now){
+    if(c.shield_until>now) return '🛡 щит '+fmt(c.shield_until-now);
+    if(c.cd_until>now)     return '⌛ КД '+fmt(c.cd_until-now);
+    return '<b class="open-lbl">⚔ ЦЕЛЬ ОТКРЫТА</b>';
+  }
+  function cardHTML(c,i,now){
+    const hp=(c.hp==null)?null:Math.max(0,Math.min(100,c.hp));
+    const opened=(c.cd_until<=now&&c.shield_until<=now);
+    return `<div class="oko-card${opened?' open':''}" id="okoc${i}">
+      <canvas class="oko-orc" width="14" height="15" data-n="${esc(c.name)}"></canvas>
+      <div class="oko-body">
+        <div class="oko-nick">${esc(c.name)}</div>
+        <div class="oko-hp"><i style="width:${hp==null?0:hp}%"></i><span>${hp==null?'HP ?':hp+' HP'}</span></div>
+        <div class="oko-meta">${c.level?('ур.'+c.level):'ур.?'} · защ.${c.defense!=null?c.defense:'?'}${(c.state&&/побед|снят|недоступ/i.test(c.state))?(' · '+esc(c.state)):''}</div>
+        <div class="oko-timer" id="okot${i}">${timerHTML(c,now)}</div>
+      </div>
+      <button class="oko-hit" onclick="OKO.hit(${i},this)">🔥 ПНУТЬ</button>
+    </div>`;
+  }
+
+  function render(){
+    const wrap=document.getElementById('okoGrid'); if(!wrap)return;
+    const now=Date.now()/1000;
+    if(!cards.length){ wrap.innerHTML='<div class="oko-empty">Око пусто. Впиши имена жертв и разожги Око.</div>'; return; }
+    wrap.innerHTML=cards.map((c,i)=>cardHTML(c,i,now)).join('');
+    wrap.querySelectorAll('.oko-orc').forEach(cv=>drawOrc(cv,cv.dataset.n));
+  }
+  function tick(){
+    const now=Date.now()/1000;
+    cards.forEach((c,i)=>{ const el=document.getElementById('okot'+i); if(el)el.innerHTML=timerHTML(c,now);
+      const cd=document.getElementById('okoc'+i); if(cd)cd.classList.toggle('open',c.cd_until<=now&&c.shield_until<=now); });
+  }
+  async function fetchCards(){
+    try{ const r=await fetch('/api/oko/cards'); const d=await r.json();
+      cards=d.cards||[]; setMode(d);
+      render();
+    }catch(e){}
+  }
+  function setMode(d){
+    const s=document.getElementById('okoMode'); if(!s)return;
+    if(!d.running) s.innerHTML='😴 Кот спит — включи «Набеги» или «Защиту», иначе «пнуть» не сработает.';
+    else if(d.defense_only) s.innerHTML='🛡 Спокойный режим: «пнуть» = <b>немедленный вылет</b> по цели.';
+    else s.innerHTML='⚔️ Набеги идут: «пнуть» = <b>приоритетный удар</b> (первым в проходе).';
+    if(typeof d.sauron==='boolean'){ sauron=d.sauron; const t=document.getElementById('okoSw'); if(t)t.checked=sauron; applySauron(); }
+  }
+  function applySauron(){
+    const w=document.getElementById('okoWrap'); if(w)w.classList.toggle('sauron',sauron);
+    document.body.classList.toggle('sauron-on',sauron);
+  }
+
+  return {
+    html(){ return `
+      <style>
+      .oko-wrap{--ember:#ff5a1f;--ember2:#ff8a2b;--blood:#7a0d0d;--sulf:#ffd36b;--void:#0a0705;--ash:#2a2320;
+        position:relative;border-radius:16px;overflow:hidden;padding:22px 18px 26px;
+        background:radial-gradient(120% 90% at 50% -8%,#1c0f08 0%,#100a07 45%,#070403 100%);
+        color:#e9d8c4;font-family:var(--mono);
+        border:1px solid rgba(255,90,31,.18);box-shadow:inset 0 0 90px rgba(255,60,10,.10),0 24px 60px -20px #000;}
+      .oko-head{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;position:relative;z-index:2}
+      .oko-eye{width:150px;height:188px;image-rendering:pixelated;filter:drop-shadow(0 0 26px rgba(255,80,20,.75)) drop-shadow(0 0 60px rgba(255,40,0,.35))}
+      .oko-title{font-family:var(--font);font-weight:800;letter-spacing:.32em;font-size:26px;
+        background:linear-gradient(180deg,#ffe08a,#ff7a1f 55%,#b31313);-webkit-background-clip:text;background-clip:text;color:transparent;
+        text-transform:uppercase;margin:2px 0 0}
+      .oko-sub{color:#b98b63;font-size:12px;letter-spacing:.14em;text-transform:uppercase;max-width:520px;line-height:1.5}
+      .oko-controls{position:relative;z-index:2;margin:20px auto 0;max-width:640px}
+      .oko-ta{width:100%;box-sizing:border-box;background:#0d0806;color:#f0dcc2;border:1px solid rgba(255,120,40,.22);
+        border-radius:10px;padding:11px 12px;font-family:var(--mono);font-size:14px;min-height:82px;resize:vertical}
+      .oko-ta:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 3px rgba(255,90,20,.18)}
+      .oko-btns{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:11px}
+      .oko-ignite{flex:1;min-width:200px;cursor:pointer;border:none;border-radius:10px;padding:13px 16px;font-weight:800;
+        font-family:var(--font);letter-spacing:.14em;text-transform:uppercase;color:#1a0a02;font-size:14px;
+        background:linear-gradient(180deg,#ffd35a,#ff7a1f 60%,#d63a09);box-shadow:0 0 24px rgba(255,90,20,.5),inset 0 1px 0 rgba(255,255,255,.4)}
+      .oko-ignite:active{transform:translateY(1px)}
+      .oko-swrap{display:flex;align-items:center;gap:9px;color:#e0a978;font-size:12px;letter-spacing:.08em;
+        text-transform:uppercase;user-select:none;cursor:pointer;padding:9px 12px;border:1px solid rgba(255,120,40,.22);border-radius:10px;background:#0d0806}
+      .oko-swrap input{position:absolute;opacity:0;pointer-events:none}
+      .oko-dot{width:38px;height:20px;border-radius:20px;background:#3a2a20;position:relative;transition:.2s;flex:none}
+      .oko-dot::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#7a6a5a;transition:.2s}
+      .oko-swrap input:checked+.oko-dot{background:linear-gradient(90deg,#ff7a1f,#d63a09)}
+      .oko-swrap input:checked+.oko-dot::after{left:20px;background:#ffe08a;box-shadow:0 0 10px #ff7a1f}
+      .oko-mode{margin-top:10px;color:#c79a72;font-size:12px;text-align:center;min-height:16px}
+      .oko-grid{position:relative;z-index:2;margin-top:20px;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+      .oko-empty{grid-column:1/-1;text-align:center;color:#7d5f48;padding:26px;font-size:13px}
+      .oko-card{position:relative;display:grid;grid-template-columns:34px 1fr;grid-template-rows:auto auto;gap:3px 11px;
+        background:linear-gradient(160deg,#1a0f09,#120b07);border:1px solid rgba(255,110,40,.16);border-radius:12px;padding:12px 12px 52px;
+        transition:.18s;overflow:hidden}
+      .oko-card::before{content:'';position:absolute;inset:0;background:radial-gradient(80% 60% at 50% 120%,rgba(255,70,10,.10),transparent);pointer-events:none}
+      .oko-card.open{border-color:rgba(255,110,30,.6);box-shadow:0 0 0 1px rgba(255,110,30,.35),0 0 26px -6px rgba(255,90,20,.55)}
+      .oko-orc{grid-row:1/3;width:34px;height:37px;image-rendering:pixelated;align-self:start;filter:drop-shadow(0 1px 2px #000)}
+      .oko-nick{font-weight:800;color:#ffdca8;font-family:var(--font);font-size:15px;letter-spacing:.02em;word-break:break-word}
+      .oko-hp{position:relative;height:13px;border-radius:7px;background:#2a0d0d;overflow:hidden;margin:4px 0 2px;border:1px solid rgba(255,80,40,.2)}
+      .oko-hp i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#8a1010,#ff3b2a);border-radius:7px}
+      .oko-hp span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;text-shadow:0 1px 2px #000;letter-spacing:.04em}
+      .oko-meta{grid-column:2;color:#a9805f;font-size:11px;letter-spacing:.02em}
+      .oko-timer{grid-column:1/3;margin-top:7px;color:#d7a679;font-size:12.5px;letter-spacing:.03em}
+      .oko-timer .open-lbl{color:#ff6a1f;text-shadow:0 0 10px rgba(255,90,20,.6);font-family:var(--font);letter-spacing:.08em}
+      .oko-hit{position:absolute;left:12px;right:12px;bottom:12px;cursor:pointer;border:none;border-radius:9px;padding:9px;
+        font-family:var(--font);font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-size:12px;color:#210c02;
+        background:linear-gradient(180deg,#ffb14a,#ff6a1f 60%,#c93408);box-shadow:0 4px 14px -4px rgba(255,90,20,.7);transition:.14s}
+      .oko-hit:hover{filter:brightness(1.08)}
+      .oko-hit:active{transform:translateY(1px)}
+      .oko-hit.done{background:linear-gradient(180deg,#6d5a3a,#4a3a24);color:#e9d8c4;box-shadow:none}
+      /* парящие угли */
+      .oko-embers{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+      .oko-embers i{position:absolute;bottom:-10px;width:3px;height:3px;border-radius:50%;background:#ff7a1f;
+        box-shadow:0 0 6px 1px rgba(255,110,20,.8);opacity:0;animation:okoEmber linear infinite}
+      @keyframes okoEmber{0%{transform:translateY(0) translateX(0);opacity:0}
+        12%{opacity:.9}88%{opacity:.7}100%{transform:translateY(-420px) translateX(var(--dx,20px));opacity:0}}
+      /* режим Саурона — усиление */
+      .oko-wrap.sauron{box-shadow:inset 0 0 140px rgba(255,50,0,.28),0 24px 60px -20px #000}
+      .oko-wrap.sauron .oko-eye{filter:drop-shadow(0 0 40px rgba(255,90,20,.95)) drop-shadow(0 0 90px rgba(255,30,0,.6))}
+      .oko-wrap.sauron .oko-embers i{animation-duration:2.6s !important}
+      body.sauron-on::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9;
+        box-shadow:inset 0 0 200px rgba(160,20,0,.22),inset 0 -120px 160px -80px rgba(255,60,0,.25);animation:okoPulse 4s ease-in-out infinite}
+      @keyframes okoPulse{0%,100%{opacity:.7}50%{opacity:1}}
+      </style>
+      <div class="oko-wrap" id="okoWrap">
+        <div class="oko-embers" id="okoEmbers"></div>
+        <div class="oko-head">
+          <canvas class="oko-eye" id="okoEye" width="64" height="80"></canvas>
+          <div class="oko-title">Око Саурона</div>
+          <div class="oko-sub">Ни одна жертва не укроется. Впиши имена — Око узрит их плоть, щиты и часы бессилия.</div>
+        </div>
+        <div class="oko-controls">
+          <textarea class="oko-ta" id="okoTa" spellcheck="false" placeholder="ник в строке — за кем следит Око&#10;Дубай&#10;Славик"></textarea>
+          <div class="oko-btns">
+            <button class="oko-ignite" onclick="OKO.ignite()">🔥 Разжечь Око</button>
+            <label class="oko-swrap"><input type="checkbox" id="okoSw" onchange="OKO.sauron(this.checked)"><span class="oko-dot"></span>Режим Саурона</label>
+          </div>
+          <div class="oko-mode" id="okoMode"></div>
+        </div>
+        <div class="oko-grid" id="okoGrid"></div>
+      </div>`;
+    },
+    start(){
+      active=true; T=0;
+      // угли
+      const emb=document.getElementById('okoEmbers');
+      if(emb){let h='';for(let i=0;i<18;i++){const l=(i*5.5+3)%100,dur=(3.2+(i%5)*0.7),dl=(i*0.4)%4,dx=((i*37)%40-20)+'px';
+        h+=`<i style="left:${l}%;animation-duration:${dur}s;animation-delay:${dl}s;--dx:${dx}"></i>`;}emb.innerHTML=h;}
+      // Око — анимация
+      const eye=document.getElementById('okoEye');
+      if(eye){ eyeTimer=setInterval(()=>{T+=0.13;drawEye(eye);},70); drawEye(eye); }
+      // подтянуть сохранённый список и сразу зажечь, если есть
+      fetch('/api/oko/targets').then(r=>r.text()).then(txt=>{
+        const ta=document.getElementById('okoTa'); if(ta)ta.value=txt;
+        if(txt.trim()){ OKO.ignite(); }
+      }).catch(()=>{});
+    },
+    stop(){
+      active=false;
+      if(eyeTimer)clearInterval(eyeTimer); if(pollTimer)clearInterval(pollTimer); if(tickTimer)clearInterval(tickTimer);
+      eyeTimer=pollTimer=tickTimer=null;
+      document.body.classList.remove('sauron-on');
+    },
+    ignite(){
+      const ta=document.getElementById('okoTa'); const txt=ta?ta.value:'';
+      fetch('/api/oko/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:txt})})
+        .then(()=>{ fetchCards();
+          if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchCards,4000);
+          if(tickTimer)clearInterval(tickTimer); tickTimer=setInterval(tick,1000);
+        }).catch(()=>{});
+    },
+    hit(i,btn){
+      const c=cards[i]; if(!c)return;
+      fetch('/api/oko/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.name})})
+        .then(r=>r.json()).then(d=>{ if(btn){btn.classList.add('done');btn.textContent='🔥 ОКО ОБРАЩЕНО';setTimeout(()=>{btn.classList.remove('done');btn.textContent='🔥 ПНУТЬ';},2600);} })
+        .catch(()=>{});
+    },
+    sauron(on){
+      sauron=!!on; applySauron();
+      fetch('/api/oko/sauron',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:sauron})}).catch(()=>{});
+    }
+  };
+})();
+
 const GAME = (function(){
 /* ── хранилища ── */
 const LS_ACH='holop_ach_v1', LS_BEST='holop_best_v1', LS_RUNS='holop_runs_v1',
