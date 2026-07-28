@@ -56,7 +56,7 @@ import sys
 import time
 from datetime import datetime
 
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.tl.custom import Message
 from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
@@ -812,6 +812,46 @@ class Smasher:
         if v.startswith("pause") or v.startswith("пауза") or v.startswith("стой"):
             return "pause"
         return "run"
+
+    # ---------- 🎮 УДАЛЁННОЕ УПРАВЛЕНИЕ (команды из «Избранного» Telegram) ----------
+    def _set_control(self, v):
+        try:
+            with open(self.control_path, "w", encoding="utf-8") as f:
+                f.write(v)
+        except OSError:
+            pass
+
+    def _set_settings(self, **kw):
+        """Слить ключи в smash_settings.json — apply_live_settings подхватит в ближайший цикл."""
+        try:
+            data = {}
+            try:
+                with open(self.settings_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                data = {}
+            data.update(kw)
+            with open(self.settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _remote_status(self):
+        st = self.control_state()
+        human = {"run": "▶️ работает", "pause": "⏸ на паузе", "stop": "⏹ остановлен"}.get(st, st)
+        modes = []
+        if getattr(self, "_defense_only", False): modes.append("только-защита")
+        if getattr(self, "_free_hunt", False): modes.append("охота")
+        if getattr(self, "_war_mode", False): modes.append("война")
+        if getattr(self, "_bomb_defense", True): modes.append("защита-бочки")
+        if getattr(self, "_human_mode", False): modes.append("человеч.режим")
+        s = self.stats
+        loot = f"{s.get('loot', 0):,}".replace(",", " ")
+        return ("🐱 Кот Альфа Бот — статус\n"
+                f"Состояние: {human}\n"
+                f"Режимы: {', '.join(modes) or '—'}\n"
+                f"Ударов {s.get('hits', 0)} · побед {s.get('wins', 0)} · лут {loot}🪙\n"
+                f"Бочек {s.get('bombs', 0)} (обезвр {s.get('defused', 0)} / взрыв {s.get('exploded', 0)})")
 
     async def gate(self):
         """Дождаться состояния run. Вернуть 'run' или 'stop'. Во время pause крутимся вхолостую."""
@@ -2523,6 +2563,88 @@ class Smasher:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  🎮 УДАЛЁННОЕ УПРАВЛЕНИЕ — команды пишешь себе в «Избранное» (Saved Messages) Telegram,
+#  бот (это твой аккаунт) их читает и исполняет. Работает с любого телефона, не палевно
+#  (Избранное — личные заметки, игра их не видит). Слушаем через events, пока бот жив.
+# ════════════════════════════════════════════════════════════════════════════
+REMOTE_HELP = (
+    "🎮 Удалённое управление Котом Альфа. Пиши команды СЮДА (в Избранное):\n"
+    "• стоп — пауза набегов\n"
+    "• старт — продолжить\n"
+    "• статус — как дела (состояние, режимы, счёт)\n"
+    "• лог — последние строки журнала\n"
+    "• война вкл|выкл · охота вкл|выкл · защита вкл|выкл · тихо вкл|выкл (человеч. режим)\n"
+    "• помощь — этот список\n"
+    "(можно с «/» или без: «стоп» и «/стоп» — одно и то же)"
+)
+# слова, по которым сообщение считается командой (без «/» тоже сработает)
+REMOTE_WORDS = {"стоп", "stop", "пауза", "стой", "старт", "start", "run", "го", "поехали",
+                "статус", "status", "лог", "log", "война", "war", "охота", "hunt",
+                "защита", "бочки", "тихо", "помощь", "help", "команды"}
+
+
+def _read_log_tail(n=14):
+    try:
+        with open(os.path.join(HERE, "smash.log"), encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return "(журнал пуст)"
+    out = []
+    for ln in lines[-n:]:
+        parts = ln.split("  ", 1)
+        out.append((parts[0][11:19] + "  " + parts[1]) if len(parts) == 2 and len(parts[0]) >= 19 else ln)
+    return "".join(out).strip() or "(журнал пуст)"
+
+
+async def handle_remote_command(bot, event):
+    """Разобрать и исполнить команду из «Избранного». Отвечает туда же."""
+    try:
+        text = (event.raw_text or "").strip()
+    except Exception:
+        return
+    if not text:
+        return
+    body = text.lstrip("/.").strip()
+    first = body.lower().split(" ", 1)[0]
+    # команда, только если начинается с «/»/«.» ИЛИ первое слово — известная команда
+    if not (text[0] in "/." or first in REMOTE_WORDS):
+        return
+    arg = body.lower().split(" ", 1)[1].strip() if " " in body else ""
+    off = arg in ("выкл", "off", "0", "нет", "-", "стоп")
+
+    async def reply(msg):
+        try:
+            await bot.c.send_message("me", msg)
+        except Exception:
+            pass
+
+    if first in ("стоп", "stop", "пауза", "стой"):
+        bot._set_control("pause")
+        await reply("⏸ Поставил набеги на паузу. Напиши «старт», чтобы продолжить.")
+    elif first in ("старт", "start", "run", "го", "поехали"):
+        bot._set_control("run")
+        await reply("▶️ Продолжаю набеги.")
+    elif first in ("статус", "status"):
+        await reply(bot._remote_status())
+    elif first in ("лог", "log"):
+        await reply("📜 Журнал (хвост):\n" + _read_log_tail())
+    elif first in ("война", "war"):
+        bot._set_settings(war_mode=not off)
+        await reply(f"⚔️ Режим войны: {'ВЫКЛ' if off else 'ВКЛ'}.")
+    elif first in ("охота", "hunt"):
+        bot._set_settings(free_hunt=not off)
+        await reply(f"🎯 Свободная охота: {'ВЫКЛ' if off else 'ВКЛ'}.")
+    elif first in ("защита", "бочки"):
+        bot._set_settings(bomb_defense=not off)
+        await reply(f"💣 Защита от бочек: {'ВЫКЛ' if off else 'ВКЛ'}.")
+    elif first in ("тихо",):
+        bot._set_settings(human_mode=not off)
+        await reply(f"🧑 Человеческий режим: {'ВЫКЛ' if off else 'ВКЛ'}.")
+    elif first in ("помощь", "help", "команды"):
+        await reply(REMOTE_HELP)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 async def main():
     ap = argparse.ArgumentParser(description="Авто-бой набегов по фикс-списку (@holop)")
     ap.add_argument("--dry-run", action="store_true", help="крутить цикл, но не жать «Атаковать»")
@@ -2553,6 +2675,24 @@ async def main():
     log(f"[{datetime.now():%H:%M:%S}] Вошёл как {me.first_name}. Режим: {mode}")
 
     bot = Smasher(client, cfg, args)
+
+    # 🎮 УДАЛЁННОЕ УПРАВЛЕНИЕ: слушаем команды в «Избранном» (Saved Messages). Пока бот жив
+    # (работает ИЛИ на паузе) — реагирует на «стоп/старт/статус/лог/война/охота/…».
+    if cfg.get("remote_control", True) and not args.selftest:
+        remote_chat = cfg.get("remote_chat", "me")
+
+        @client.on(events.NewMessage(chats=remote_chat))
+        async def _on_remote(ev):
+            try:
+                await handle_remote_command(bot, ev)
+            except Exception as e:
+                log(f"  ⚠️ удалённая команда сбой: {type(e).__name__}: {e}")
+
+        log("🎮 Удалённое управление ВКЛ — команды пиши себе в «Избранное» Telegram (напиши «помощь»).")
+        try:
+            await client.send_message("me", REMOTE_HELP)
+        except Exception:
+            pass
 
     # Мягкая остановка по SIGTERM/SIGINT: пишем 'stop' в пульт, чтобы бот доиграл
     # текущее действие, корректно вышел через gate() и НАПЕЧАТАЛ итоговый отчёт.
