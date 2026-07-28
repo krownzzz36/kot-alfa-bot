@@ -466,6 +466,8 @@ class Smasher:
         self._next_bank = 0.0         # когда следующий раз по таймеру (раз в ~час)
         self._auto_defense = False    # авто-оборона: ров+частокол активны + запас
         self._next_defense = 0.0      # когда следующий раз проверять оборону
+        self._auto_guard = False      # 🛡️ авто-защита холопов: держать охрану (проактивно)
+        self._next_guard = 0.0        # когда следующий раз проверять охрану холопов
         self._last_attack_id = 0      # id последнего замеченного пуша «НА ТЕБЯ НАПАЛИ»
         self._auto_oboz = False       # авто-покупка обоза (+50% серебра с набегов)
         self._war_mode = False        # ⚔️ режим войны: бить по КД без пауз, держать цели прижатыми
@@ -582,6 +584,7 @@ class Smasher:
         self._auto_kazna = bool(data.get("auto_kazna", getattr(self, "_auto_kazna", False)))
         self._bank_gold = bool(data.get("bank_gold", getattr(self, "_bank_gold", False)))  # класть ли золото в казну (деф нет — только серебро)
         self._auto_defense = bool(data.get("auto_defense", getattr(self, "_auto_defense", False)))
+        self._auto_guard = bool(data.get("auto_guard", getattr(self, "_auto_guard", False)))
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
         self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
@@ -2308,6 +2311,7 @@ class Smasher:
         self._last_bank = time.time()
         self._next_bank = time.time() + 3600 + random.uniform(-600, 600)
         self._next_defense = time.time() + 60 + random.uniform(0, 120)   # первую оборону — скоро
+        self._next_guard = time.time() + 120 + random.uniform(0, 180)    # первую проверку охраны — скоро
         self._oboz_until = self._load_oboz_until()   # обоз мог остаться живым с прошлого запуска
         if self._auto_oboz:
             left = max(0, self._oboz_until - time.time())
@@ -2317,6 +2321,8 @@ class Smasher:
                 "плюс при уходе на лечение.")
         if self._auto_defense:
             log("🛡️ Авто-оборона ВКЛ — держу ров/частокол активными + запас.")
+        if self._auto_guard:
+            log("🛡️ Авто-защита холопов ВКЛ — держу охрану на холопах (проверяю ~раз в час).")
         await self.remote_init()   # 🎮 удалёнка: запомнить хвост Избранного + прислать помощь
         while True:
             if await self.gate() == "stop":
@@ -2427,10 +2433,9 @@ class Smasher:
                 if _is_dead_session(e):
                     raise   # мёртвую сессию обрабатывает главный цикл (остановка)
                 log(f"  ⚠️ сбой в проверке бочки: {type(e).__name__}: {e}")
-        # 🛡️ РЕЖИМ «ТОЛЬКО ЗАЩИТА ОТ БОЧЕК»: не фармим — просто сторожим бочку короткими циклами.
-        if self._defense_only:
-            return await self.sleep_gated(random.uniform(20, 40))
-        # 🏦 АВТО-КАЗНА по таймеру (раз в ~час ± рандом)
+        # ═══ БЕЗОПАСНЫЕ ФОНОВЫЕ ДЕЙСТВИЯ (и в СПОКОЙНОМ, и в БОЕВОМ режиме) ═══
+        # Спокойный режим (только защита) = эти действия без набегов. Боевой = эти + набеги.
+        # 🏦 АВТО-КАЗНА по таймеру (раз в ~час ± рандом): собрать доход → депозит → реинвест.
         if self._auto_kazna and self._next_bank and time.time() >= self._next_bank:
             try:
                 await self.collect_and_bank()
@@ -2442,15 +2447,18 @@ class Smasher:
             return None
         # ⚔️ если на меня напали — оборона могла сгореть, проверим немедленно
         await self.check_attacked()
-        # 🐴 АВТО-ОБОЗ (+50% серебра с набегов). Сверяется с локальным файлом — без лишних запросов
-        if self._auto_oboz:
+        # 🛡️ АВТО-ЗАЩИТА ХОЛОПОВ по таймеру (проактивно держим охрану): если у кого-то охрана
+        # слетела/истекла — ставим всем (золото с баланса; мало → 10% казны). Раз в ~45–75 мин.
+        if self._auto_guard and self._next_guard and time.time() >= self._next_guard:
             try:
-                await self.ensure_oboz()
+                log("🛡️ Авто-защита холопов: проверяю охрану…")
+                await self.protect_all_holops()
             except Exception as e:
                 if _is_dead_session(e):
                     raise
-                log(f"  ⚠️ авто-обоз сбой: {type(e).__name__}: {e}")
-                self._oboz_retry(600, "сбой при покупке")
+                log(f"  ⚠️ авто-защита холопов сбой: {type(e).__name__}: {e}")
+            self._next_guard = time.time() + random.uniform(2700, 4500)   # ~45–75 мин ± рандом
+            return None
         # 🛡️ АВТО-ОБОРОНА по таймеру (ров/частокол активны + запас)
         if self._auto_defense and self._next_defense and time.time() >= self._next_defense:
             try:
@@ -2461,6 +2469,18 @@ class Smasher:
                 log(f"  ⚠️ авто-оборона сбой: {type(e).__name__}: {e}")
                 self._next_defense = time.time() + 900 + random.uniform(-180, 180)   # ~15 мин ± 3 при сбое
             return None
+        # ═══ СПОКОЙНЫЙ РЕЖИМ (только защита): дальше — БОЕВОЕ, его пропускаем ═══
+        if self._defense_only:
+            return await self.sleep_gated(random.uniform(20, 40))
+        # 🐴 АВТО-ОБОЗ (+50% серебра С НАБЕГОВ — только боевой режим). Сверяется с файлом.
+        if self._auto_oboz:
+            try:
+                await self.ensure_oboz()
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"  ⚠️ авто-обоз сбой: {type(e).__name__}: {e}")
+                self._oboz_retry(600, "сбой при покупке")
         # РЕЖИМ ЛЕЧЕНИЯ: не атакуем, но КАЖДЫЙ РАЗ читаем реальное HP (Территория).
         # Просыпаемся сразу, как только HP дорос до recover_to (в т.ч. после эликсира).
         if self._healing:
