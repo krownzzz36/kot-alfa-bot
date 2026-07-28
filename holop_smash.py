@@ -56,7 +56,7 @@ import sys
 import time
 from datetime import datetime
 
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.tl.custom import Message
 from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
@@ -508,7 +508,7 @@ class Smasher:
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
         self._holop_guard = True      # 🚨 авто-отбой угона холопа (выкуп/защита), галочка, деф ВКЛ
         self._theft_done = set()      # id обработанных уведомлений угона (не зациклиться)
-        self._last_theft_scan = 0.0   # когда последний раз сканировали угон (throttle)
+        self._theft_pending = None    # сообщение-уведомление угона (ставит СОБЫТИЕ @holop, без опроса)
         self._theft_busy = False      # идёт отбой угона/бочки — не запускать вложенный (реентранси-гард)
         self._remote_on = bool(cfg.get("remote_control", True))   # 🎮 удалёнка через «Избранное»
         self._remote_last_id = 0      # id последнего обработанного сообщения-команды
@@ -773,12 +773,19 @@ class Smasher:
 
     async def pause(self):
         await asyncio.sleep(random.uniform(self.lo, self.hi))
-        # 🚨 угон холопа может прийти в ЛЮБОЙ момент (окно ~10с) — ловим прямо в паузе между
-        # действиями, а не только между целями. Гард `_theft_busy` + throttle 4с внутри тика.
+        # 🚨 угон холопа мог прийти событием в ЛЮБОЙ момент — подхватываем флаг прямо в паузе
+        # между действиями (это проверка в памяти, БЕЗ сети). Гард `_theft_busy` внутри тика.
         await self._theft_guard_tick()
 
     async def inter_hit(self):
-        await asyncio.sleep(random.uniform(self.s["inter_hit_lo"], self.s["inter_hit_hi"]))
+        # дробим ожидание между ударами на короткие куски и подхватываем угон (флаг, без сети),
+        # чтобы отбой стартовал за ~1-2с, а не ждал конца паузы между целями.
+        total = random.uniform(self.s["inter_hit_lo"], self.s["inter_hit_hi"])
+        end = time.time() + total
+        while time.time() < end:
+            if await self._theft_guard_tick():
+                return
+            await asyncio.sleep(min(1.5, end - time.time()))
 
     async def _ensure_conn(self):
         """Гарантировать живое соединение и разрезолвленный entity бота."""
@@ -819,7 +826,12 @@ class Smasher:
             if lim > limit:
                 continue
             try:
-                return await self._net(lambda l=lim: self.c.get_messages(self.peer, limit=l)) or []
+                msgs = await self._net(lambda l=lim: self.c.get_messages(self.peer, limit=l)) or []
+                # 🚨 пиггибэк-страховка: бот и так читает ленту постоянно — заодно ловим угон
+                # холопа тут же (ноль лишних запросов). Основной триггер — событие @holop.
+                if self._holop_guard and not self._theft_busy:
+                    self._scan_theft_in(msgs)
+                return msgs
             except Exception as e:
                 if type(e).__name__ != "TypeNotFoundError":
                     raise
@@ -1576,6 +1588,8 @@ class Smasher:
         await self.send(search_query(name) or name)   # искать по чистому ядру (без эмодзи)
         want = norm(name)
         for _ in range(16):
+            if await self._theft_guard_tick():   # 🚨 угон пришёл во время поиска — отбить сразу
+                return None                       # экран сменился, цель добьём в следующий проход
             for m in sorted(await self.recent(6), key=lambda x: x.id, reverse=True):
                 if m.out:
                     continue
@@ -1727,6 +1741,8 @@ class Smasher:
     async def do_target(self, name):
         """Обработать одну цель: ударить / поставить таймер. Обновляет self.next_ok[name]."""
         s = self.s
+        if await self._theft_guard_tick():   # 🚨 угон важнее удара — отбить сразу, цель добьём потом
+            return None
         res = await self.arena_search(name)
         if not res:
             self.next_ok[name] = time.time() + s["notfound_retry"] * 60
@@ -2099,32 +2115,54 @@ class Smasher:
                 return m
         return None
 
-    async def check_and_handle_theft(self):
-        """Поймать «У тебя выкупили холопа» и включить гонку выкупа/защиты. True — обработано."""
-        if not self._holop_guard:
-            return False
-        notif = None
+    def _note_theft_msg(self, m):
+        """Пометить сообщение как уведомление угона (взводит флаг). Только память, БЕЗ сети.
+        Зовётся из СОБЫТИЯ @holop и из пиггибэка (скан уже прочитанной ленты)."""
         try:
-            for m in sorted(await self.recent(15), key=lambda x: x.id, reverse=True):
-                if m.out or m.id in self._theft_done:
-                    continue
-                low = (m.message or "").lower()
-                if THEFT_NOTIF in low and self._has(m, THEFT_BUYBACK_BTN):
-                    notif = m
-                    break
+            if self._theft_busy or not m or getattr(m, "out", False) or m.id in self._theft_done:
+                return
+            if THEFT_NOTIF in (m.message or "").lower() and self._has(m, THEFT_BUYBACK_BTN):
+                if not self._theft_pending or self._theft_pending.id != m.id:
+                    self._theft_pending = m
+                    log("  🚨 Триггер на сообщении: у тебя выкупили холопа — отобью в ближайшую паузу.")
+        except Exception:
+            pass
+
+    async def _on_holop_event(self, event):
+        """СОБЫТИЕ Telethon: @holop прислал сообщение. Если это уведомление угона — взводим
+        флаг МГНОВЕННО (без единого запроса). Отбой запустит основной цикл в ближайшей паузе."""
+        if self._holop_guard:
+            self._note_theft_msg(event.message)
+
+    def _scan_theft_in(self, msgs):
+        """Пиггибэк: пробежать УЖЕ прочитанные сообщения (напр. лента бочки) на уведомление
+        угона — страховка, если событие не доехало. Ноль лишних запросов."""
+        if not self._holop_guard:
+            return
+        for m in msgs or []:
+            self._note_theft_msg(m)
+
+    async def _theft_guard_tick(self):
+        """Отбить угон, если он ПРИШЁЛ (флаг ставит СОБЫТИЕ на сообщении @holop — как на бочке).
+        Здесь только проверка флага в памяти — БЕЗ сетевых запросов. Гард `_theft_busy` не даёт
+        запуститься вложенно во время отбоя угона/бочки. Зовётся из пауз/снов/между целями."""
+        if not self._holop_guard or self._theft_busy:
+            return False
+        notif = self._theft_pending
+        if not notif:
+            return False
+        self._theft_pending = None
+        self._theft_busy = True
+        try:
+            await self.handle_holop_theft(notif)
         except Exception as e:
             if _is_dead_session(e):
                 raise
-            return False
-        if not notif:
-            return False
-        self._theft_busy = True   # гард: пока отбиваем — паузы/сны не запускают вложенный отбой
-        try:
-            await self.handle_holop_theft(notif)
+            log(f"  ⚠️ отбой угона сбой: {type(e).__name__}: {e}")
         finally:
             self._theft_busy = False
-            # пометить ВСЕ текущие сообщения гонки обработанными — чтобы не зацикливаться на старом
-            try:
+            self._theft_done.add(notif.id)
+            try:                              # пометить ленту гонки, чтоб не триггерить повторно
                 for m in await self.recent(12):
                     low = (m.message or "").lower()
                     if THEFT_NOTIF in low or THEFT_BOUGHT in low:
@@ -2134,24 +2172,6 @@ class Smasher:
             if len(self._theft_done) > 300:
                 self._theft_done = set(sorted(self._theft_done)[-150:])
         return True
-
-    async def _theft_guard_tick(self):
-        """Быстрая проверка угона холопа — зовётся из КАЖДОЙ паузы/сна/между целями, чтобы
-        отклик был ~мгновенным (окно кражи может быть всего ~10с, напр. зелье жаб). Гард
-        `_theft_busy` — не запускать вложенно во время отбоя угона/бочки (реентранси)."""
-        if not self._holop_guard or self._theft_busy:
-            return False
-        now = time.time()
-        if now - self._last_theft_scan < 4:
-            return False
-        self._last_theft_scan = now
-        try:
-            return await self.check_and_handle_theft()
-        except Exception as e:
-            if _is_dead_session(e):
-                raise
-            log(f"  ⚠️ сбой проверки угона холопа: {type(e).__name__}: {e}")
-            return False
 
     async def handle_holop_theft(self, first):
         name = re.search(r"Холоп:\s*([^\n]+)", first.message or "")
@@ -2655,6 +2675,18 @@ class Smasher:
         if self._auto_guard:
             log("🛡️ Авто-защита холопов ВКЛ — держу охрану на холопах (проверяю ~раз в час).")
         await self.remote_init()   # 🎮 удалёнка: запомнить хвост Избранного + прислать помощь
+        # 🚨 АНТИ-КРАЖА: вешаем ТРИГГЕР НА СООБЩЕНИЕ @holop (событие Telethon) — уведомление
+        # угона взводит флаг мгновенно, БЕЗ опроса сети. Отбой запустит цикл в ближайшей паузе.
+        if self._holop_guard:
+            try:
+                await self._ensure_conn()
+                self.c.add_event_handler(self._on_holop_event,
+                                         events.NewMessage(chats=self.peer, incoming=True))
+                log("🚨 Анти-кража холопа ВКЛ — триггер на сообщении @holop (событие, без опроса). "
+                    "Украли → мгновенно выкупаю обратно и ставлю на защиту.")
+            except Exception as e:
+                log(f"  ⚠️ событие на угон не повесилось ({type(e).__name__}) — "
+                    "страховка через ленту (пиггибэк на чтении бочки).")
         while True:
             if await self.gate() == "stop":
                 break
@@ -2755,15 +2787,9 @@ class Smasher:
         s = self.s
         self.heartbeat()
         await self._remote_poll()   # 🎮 команды из «Избранного» (стоп/старт/статус/…)
-        # 🚨 ПРИОРИТЕТ №0: угон холопа — окно всего ~60с (23с на перекуп), важнее ВСЕГО.
-        if self._holop_guard:
-            try:
-                if await self.check_and_handle_theft():
-                    return None
-            except Exception as e:
-                if _is_dead_session(e):
-                    raise
-                log(f"  ⚠️ проверка угона холопа: {type(e).__name__}: {e}")
+        # 🚨 ПРИОРИТЕТ №0: угон холопа (флаг ставит событие на сообщении @holop) — важнее ВСЕГО.
+        if await self._theft_guard_tick():
+            return None
         # 💣 ПРИОРИТЕТ №1: защита от бочки (если включена галочкой). Важнее набегов и лечения.
         if self._bomb_defense or self._defense_only:
             try:
