@@ -1892,11 +1892,18 @@ class Smasher:
     # Максим: «оно на кармане должно быть, казна создаёт ошибки»). Серебро 100k — с ретраями
     # («жать, пока не снимется» — игровой баг). В конце проверяем, что территория не «взорвана».
     async def recover_after_explosion(self):
-        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙) → защищаю всех холопов "
-                       "(золото с баланса; мало — {}).".format(
+        self._bomb_log("  🛠️ ВОССТАНОВЛЕНИЕ: лечу территорию (100k🪙) → защищаю холопов "
+                       "(золото с баланса; мало — {}) → ров/частокол.".format(
                            "снимаю из казны" if self._bomb_gold_kazna else "казну НЕ трогаю"))
         ok_heal = await self.heal_territory()
         ok_prot = await self.protect_all_holops()
+        # ров + частокол после взрыва (Ксюша: защита слетает — восстановить оборону)
+        try:
+            await self.ensure_defenses()
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            self._bomb_log(f"  ⚠️ восстановление обороны сорвалось: {type(e).__name__}")
         self._bomb_log("  🏁 Восстановление — лечение: {}, защита: {}.".format(
             "ок" if ok_heal else "НЕ ок", "ок" if ok_prot else "НЕ ок"))
         await self.notify_me("🛠️ После взрыва: территория {}, холопы {}."
@@ -1967,24 +1974,31 @@ class Smasher:
         return False
 
     async def heal_territory(self):
-        """Лечение территории 100k серебра. Если свободного серебра мало — снимаем из казны.
-        Жмём «100.0K🪙» на территории, подтверждение читаем из АЛЕРТА. Ретраим, пока территория
-        не перестанет быть «взорвана» (Максим: «жать, пока не снимется; проверять»)."""
-        for attempt in range(4):
+        """Лечение территории 100k серебра. Ксюша: игра из-за ДЕСИНКА не сразу «видит» снятые
+        деньги → лечение не проходит с первого раза, надо снять и жать лечение НЕСКОЛЬКО раз."""
+        # 1) обеспечить 100k серебра на балансе (снять из казны + пауза, чтобы игра «увидела»)
+        for _ in range(3):
             _, silver = await self.my_balance()
-            if silver < 100000:
-                await self._withdraw_silver_100k()
+            if silver >= 100000:
+                break
+            await self._withdraw_silver_100k()
+            await rsleep(3.0)   # десинк: даём игре увидеть снятые деньги
+        # 2) жать лечение НЕСКОЛЬКО раз (Ксюша: «тыкать раза три»), пока территория не оживёт
+        for attempt in range(6):
             alert = await self._press_territory_heal()
-            if alert and "восстановлен" in alert.lower():
+            if (alert and "восстановлен" in alert.lower()) or not await self._territory_exploded():
                 self.stats["spent_silver"] += 100000
-                self._bomb_log(f"  ❤️ Территория восстановлена ({alert.strip()}).")
+                self._bomb_log("  ❤️ Территория восстановлена"
+                               + (f" ({alert.strip()})" if alert else "") + ".")
                 return True
-            if not await self._territory_exploded():
-                self._bomb_log("  ❤️ Территория больше не взорвана — лечение засчитано.")
-                return True
-            self._bomb_log(f"  ↻ лечение не подтвердилось (попытка {attempt + 1}/4) — пробую ещё.")
-            await rsleep(1.5)
-        self._bomb_log("  ⚠️ территорию вылечить не удалось за 4 попытки — проверь вручную.")
+            self._bomb_log(f"  ↻ лечение не прошло ({attempt + 1}/6) — жду и жму ещё (десинк денег).")
+            await rsleep(2.5)
+            if attempt == 2:   # 3-я неудача — вдруг снятие не доехало, досними
+                _, sv = await self.my_balance()
+                if sv < 100000:
+                    await self._withdraw_silver_100k()
+                    await rsleep(3.0)
+        self._bomb_log("  ⚠️ территорию вылечить не удалось за 6 попыток — проверь вручную/казну.")
         return False
 
     async def _withdraw_gold(self, amount):
