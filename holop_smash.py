@@ -2029,9 +2029,12 @@ class Smasher:
         res = await self.click(tmsg, heal[0], heal[1], label=heal[2])
         return self._alert_text(res)
 
-    async def _withdraw_silver_100k(self):
-        """Снять 100 000 серебра из казны с РЕТРАЯМИ (баг: «жать несколько раз»).
-        Аварийный вид (взрыв): «Снять с депозита»→«Снять 100.0K». Обычный: Серебро→Снять→100k/Ввести сумму."""
+    async def _withdraw_silver(self, amount=200000):
+        """Снять `amount` серебра из казны. Максим: снимать 200к с ЗАПАСОМ (вдруг ёбнут в момент
+        восстановления — чтоб без серебра не остаться) через «Ввести сумму». При ПРЕД-снятии
+        территория ещё цела → казна ОБЫЧНАЯ (Серебро → Снять → Ввести сумму → сумма). Аварийный
+        вид (если уже взорвано) — запасной путь «Снять с депозита» → «Снять 100.0K». Ретраи."""
+        amount = int(max(1, amount))
         for _ in range(3):
             await self.send("Личная казна")
             km = await self._wait_msg(lambda m: any(w in (m.message or "").lower()
@@ -2040,43 +2043,47 @@ class Smasher:
             if not km:
                 await rsleep(1.2)
                 continue
-            # АВАРИЙНЫЙ вид: «Снять с депозита (…🪙)»
-            if await self._click_sub(km, "снять с депозита", label="Снять с депозита"):
+            # ОБЫЧНЫЙ вид: Серебро → Снять → Ввести сумму → сумма (Максим: 200к)
+            if await self._click_sub(km, "серебро", label="Серебро"):
+                snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
+                if snyat and await self._click_sub(snyat, "снять", label="Снять"):
+                    scr = await self._wait_msg(lambda m: self._has(m, "ввести")
+                                               or any("100" in (bt or "") for _, _, bt in self.flat_buttons(m)))
+                    if scr and await self._click_sub(scr, "ввести", label="Ввести сумму"):
+                        await rsleep(0.6)
+                        await self.send(str(amount))
+                        await rsleep(1.2)
+                        self._bomb_log(f"  🏦 Снял {amount} серебра (Ввести сумму).")
+                        return True
+                    if scr and await self._click_sub(scr, "100", label="Снять 100.0K"):
+                        await rsleep(1.0)
+                        return True
+            # АВАРИЙНЫЙ вид (уже взорвано): «Снять с депозита» → «Снять 100.0K»
+            await self.send("Личная казна")
+            km = await self._wait_msg(lambda m: any(w in (m.message or "").lower()
+                                                    for w in ("казна", "депозит", "снятие", "взорвана"))
+                                      and self.flat_buttons(m))
+            if km and await self._click_sub(km, "снять с депозита", label="Снять с депозита"):
                 step = await self._wait_msg(lambda m: any(("снять" in (bt or "").lower() and "100" in (bt or ""))
                                                           for _, _, bt in self.flat_buttons(m)))
                 if step and await self._click_sub(step, "100", label="Снять 100.0K🪙"):
                     await rsleep(1.0)
                     return True
-            # ОБЫЧНЫЙ вид: Серебро → Снять → (кнопка «100k» или Ввести сумму → 100000)
-            elif await self._click_sub(km, "серебро", label="Серебро"):
-                snyat = await self._wait_msg(lambda m: self._has(m, "снять"))
-                if snyat and await self._click_sub(snyat, "снять", label="Снять"):
-                    scr = await self._wait_msg(lambda m: self._has(m, "ввести")
-                                               or any("100" in (bt or "") for _, _, bt in self.flat_buttons(m)))
-                    if scr:
-                        if await self._click_sub(scr, "100", label="Снять 100k"):
-                            await rsleep(1.0)
-                            return True
-                        if await self._click_sub(scr, "ввести", label="Ввести сумму"):
-                            await rsleep(0.6)
-                            await self.send("100000")
-                            await rsleep(1.2)
-                            return True
             await rsleep(1.2)
         self._bomb_log("  ⚠️ не смог снять серебро за 3 попытки — проверь казну.")
         return False
 
-    async def _ensure_silver_for_heal(self, target=110000):
-        """ЗАРАНЕЕ (до разминирования) снять серебро, чтобы на балансе стало > target (>100k
-        с запасом — Владимир). Пока идёт разминирование, игра успеет «увидеть» деньги (десинк).
-        Снимаем простой кнопкой «Снять 100.0K» (Владимир: она в казне есть, надёжнее)."""
+    async def _ensure_silver_for_heal(self, target=190000):
+        """ЗАРАНЕЕ (до разминирования) снять серебро с ЗАПАСОМ (Максим: 200к — вдруг ёбнут в момент
+        восстановления, чтоб без серебра не остаться). Пока идёт разминирование, игра успеет
+        «увидеть» деньги (десинк). Снимаем 200к через «Ввести сумму» (казна ещё в обычном виде)."""
         for _ in range(3):
             _, silver = await self.my_balance()
             if silver >= target:
-                self._bomb_log(f"  🏦 серебра на балансе {silver} (≥{target}) — на лечение хватит.")
+                self._bomb_log(f"  🏦 серебра на балансе {silver} (≥{target}) — на лечение с запасом хватит.")
                 return True
-            self._bomb_log(f"  🏦 серебра {silver} < {target} — снимаю 100k из казны ЗАРАНЕЕ (до разминирования).")
-            await self._withdraw_silver_100k()
+            self._bomb_log(f"  🏦 серебра {silver} < {target} — снимаю 200k из казны ЗАРАНЕЕ (до разминирования).")
+            await self._withdraw_silver(200000)
             await rsleep(2.5)   # даём игре «увидеть» снятые деньги
         return False
 
@@ -2084,12 +2091,12 @@ class Smasher:
         """Лечение территории 100k серебра. Ксюша: игра из-за ДЕСИНКА не сразу «видит» снятые
         деньги → лечение не проходит с первого раза, надо снять и жать лечение НЕСКОЛЬКО раз.
         Серебро обычно уже снято ЗАРАНЕЕ (_ensure_silver_for_heal при детекте бочки)."""
-        # 1) обеспечить 100k серебра на балансе (снять из казны + пауза, чтобы игра «увидела»)
+        # 1) обеспечить серебро на балансе (обычно уже снято заранее; если нет — снимаем 200к)
         for _ in range(3):
             _, silver = await self.my_balance()
             if silver >= 100000:
                 break
-            await self._withdraw_silver_100k()
+            await self._withdraw_silver(200000)
             await rsleep(3.0)   # десинк: даём игре увидеть снятые деньги
         # 2) жать лечение НЕСКОЛЬКО раз (Ксюша: «тыкать раза три»), пока территория не оживёт
         for attempt in range(6):
@@ -2104,7 +2111,7 @@ class Smasher:
             if attempt == 2:   # 3-я неудача — вдруг снятие не доехало, досними
                 _, sv = await self.my_balance()
                 if sv < 100000:
-                    await self._withdraw_silver_100k()
+                    await self._withdraw_silver(200000)
                     await rsleep(3.0)
         self._bomb_log("  ⚠️ территорию вылечить не удалось за 6 попыток — проверь вручную/казну.")
         return False
@@ -2518,6 +2525,7 @@ class Smasher:
         for t in eligible:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
+            await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее набега — обработали, прерываем проход
             my_after = await self.do_target(t)
@@ -2544,6 +2552,7 @@ class Smasher:
         for t in names:
             if self.control_state() != "run":
                 return None   # пульт переключили — уходим на gate() в начале цикла
+            await self._remote_poll()   # 🎮 команды из «Избранного» и во время прохода
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее охоты — обработали, прерываем проход
             my_after = await self.do_target(t)
