@@ -56,7 +56,7 @@ import sys
 import time
 from datetime import datetime
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from telethon.tl.custom import Message
 from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
@@ -482,6 +482,9 @@ class Smasher:
         self._bomb_alert_until = 0.0  # до этого времени — тревога бочки: долбим «Дружину» каждый цикл
         self._bomb_done = set()       # id уже обработанных нотификаций бочки (не дублировать)
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
+        self._remote_on = bool(cfg.get("remote_control", True))   # 🎮 удалёнка через «Избранное»
+        self._remote_last_id = 0      # id последнего обработанного сообщения-команды
+        self._remote_last_poll = 0.0  # троттл опроса Избранного
         self._bomb_defense = True     # 🛡️ защищаться от бочек во время набегов (галочка, деф ВКЛ)
         self._defense_only = False    # 🛡️ режим ТОЛЬКО защита от бочек: не фармим, только сторожим бочку
         self._bomb_gold_kazna = True  # после взрыва брать золото на защиту из казны, если на балансе мало
@@ -853,6 +856,44 @@ class Smasher:
                 f"Ударов {s.get('hits', 0)} · побед {s.get('wins', 0)} · лут {loot}🪙\n"
                 f"Бочек {s.get('bombs', 0)} (обезвр {s.get('defused', 0)} / взрыв {s.get('exploded', 0)})")
 
+    async def _remote_poll(self):
+        """Опросить «Избранное» на новые команды (удалённое управление). Троттл ~8с.
+        Опрос надёжнее событий telethon при нашей нагрузке (много get_messages)."""
+        if not self._remote_on:
+            return
+        now = time.time()
+        if now - self._remote_last_poll < 8:
+            return
+        self._remote_last_poll = now
+        try:
+            msgs = await self._net(lambda: self.c.get_messages("me", limit=6))
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            return
+        for m in sorted(msgs or [], key=lambda x: x.id):
+            if m.id <= self._remote_last_id:
+                continue
+            self._remote_last_id = m.id
+            try:
+                await handle_remote_command(self, m.message or "")
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"  ⚠️ удалённая команда сбой: {type(e).__name__}: {e}")
+
+    async def remote_init(self):
+        """При старте: запомнить текущий хвост Избранного (старое не исполняем) + прислать помощь."""
+        if not self._remote_on:
+            return
+        try:
+            last = await self._net(lambda: self.c.get_messages("me", limit=1))
+            self._remote_last_id = last[0].id if last else 0
+            await self.c.send_message("me", REMOTE_HELP)
+            log("🎮 Удалённое управление ВКЛ — пиши команды в «Избранное» Telegram (напиши «помощь»).")
+        except Exception:
+            pass
+
     async def gate(self):
         """Дождаться состояния run. Вернуть 'run' или 'stop'. Во время pause крутимся вхолостую."""
         while True:
@@ -868,6 +909,7 @@ class Smasher:
             if not self._paused_note:
                 log("⏸  ПАУЗА — жду 'run' в пульте (smash_control.txt).")
                 self._paused_note = True
+            await self._remote_poll()   # на паузе тоже слушаем команды из «Избранного» (напр. «старт»)
             await rsleep(3)
 
     async def sleep_gated(self, seconds):
@@ -2254,6 +2296,7 @@ class Smasher:
                 "плюс при уходе на лечение.")
         if self._auto_defense:
             log("🛡️ Авто-оборона ВКЛ — держу ров/частокол активными + запас.")
+        await self.remote_init()   # 🎮 удалёнка: запомнить хвост Избранного + прислать помощь
         while True:
             if await self.gate() == "stop":
                 break
@@ -2339,6 +2382,7 @@ class Smasher:
         self.apply_live_settings()   # подхватываем настройки боя из панели на лету
         s = self.s
         self.heartbeat()
+        await self._remote_poll()   # 🎮 команды из «Избранного» (стоп/старт/статус/…)
         # 💣 ПРИОРИТЕТ №1: защита от бочки (если включена галочкой). Важнее набегов и лечения.
         if self._bomb_defense or self._defense_only:
             try:
@@ -2596,19 +2640,16 @@ def _read_log_tail(n=14):
     return "".join(out).strip() or "(журнал пуст)"
 
 
-async def handle_remote_command(bot, event):
-    """Разобрать и исполнить команду из «Избранного». Отвечает туда же."""
-    try:
-        text = (event.raw_text or "").strip()
-    except Exception:
-        return
+async def handle_remote_command(bot, text):
+    """Разобрать и исполнить команду из «Избранного». Отвечает туда же. Вернуть True, если это была команда."""
+    text = (text or "").strip()
     if not text:
-        return
+        return False
     body = text.lstrip("/.").strip()
     first = body.lower().split(" ", 1)[0]
     # команда, только если начинается с «/»/«.» ИЛИ первое слово — известная команда
     if not (text[0] in "/." or first in REMOTE_WORDS):
-        return
+        return False
     arg = body.lower().split(" ", 1)[1].strip() if " " in body else ""
     off = arg in ("выкл", "off", "0", "нет", "-", "стоп")
 
@@ -2642,6 +2683,9 @@ async def handle_remote_command(bot, event):
         await reply(f"🧑 Человеческий режим: {'ВЫКЛ' if off else 'ВКЛ'}.")
     elif first in ("помощь", "help", "команды"):
         await reply(REMOTE_HELP)
+    else:
+        await reply("🤔 Не понял команду. Напиши «помощь».")
+    return True
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2675,24 +2719,8 @@ async def main():
     log(f"[{datetime.now():%H:%M:%S}] Вошёл как {me.first_name}. Режим: {mode}")
 
     bot = Smasher(client, cfg, args)
-
-    # 🎮 УДАЛЁННОЕ УПРАВЛЕНИЕ: слушаем команды в «Избранном» (Saved Messages). Пока бот жив
-    # (работает ИЛИ на паузе) — реагирует на «стоп/старт/статус/лог/война/охота/…».
-    if cfg.get("remote_control", True) and not args.selftest:
-        remote_chat = cfg.get("remote_chat", "me")
-
-        @client.on(events.NewMessage(chats=remote_chat))
-        async def _on_remote(ev):
-            try:
-                await handle_remote_command(bot, ev)
-            except Exception as e:
-                log(f"  ⚠️ удалённая команда сбой: {type(e).__name__}: {e}")
-
-        log("🎮 Удалённое управление ВКЛ — команды пиши себе в «Избранное» Telegram (напиши «помощь»).")
-        try:
-            await client.send_message("me", REMOTE_HELP)
-        except Exception:
-            pass
+    # 🎮 Удалённое управление слушаем ОПРОСОМ «Избранного» внутри run() (remote_init + _remote_poll),
+    # это надёжнее событий telethon при нашей нагрузке (много get_messages).
 
     # Мягкая остановка по SIGTERM/SIGINT: пишем 'stop' в пульт, чтобы бот доиграл
     # текущее действие, корректно вышел через gate() и НАПЕЧАТАЛ итоговый отчёт.
