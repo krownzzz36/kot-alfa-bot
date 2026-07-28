@@ -870,6 +870,7 @@ class Smasher:
         except Exception as e:
             if _is_dead_session(e):
                 raise
+            log(f"  🎮[diag] опрос Избранного упал: {type(e).__name__}: {e}")
             return
         for m in sorted(msgs or [], key=lambda x: x.id):
             if m.id <= self._remote_last_id:
@@ -2664,9 +2665,9 @@ async def handle_remote_command(bot, text):
 
     async def reply(msg):
         try:
-            await bot.c.send_message("me", msg)
-        except Exception:
-            pass
+            await bot._net(lambda: bot.c.send_message("me", msg))   # через переподключатель — надёжно
+        except Exception as e:
+            log(f"  ⚠️ не смог ответить в «Избранное»: {type(e).__name__}: {e}")
 
     if first in ("стоп", "stop", "пауза", "стой"):
         bot._set_control("pause")
