@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-50"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-51"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -1178,6 +1178,30 @@ PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
    --accent:#5b9dff;--blue:#5b9dff;--green:#37c98a;--red:#ff5a6b;--grey:#17171d;--purple:#8f7bff;--amber:#5b9dff;
    --cat:#3b3b45;
    --shadow:0 1px 2px #000,0 24px 52px -16px #000;}
+ /* 🔥 РЕЖИМ САУРОНА — весь пульт в Мордор: чёрное с огнём/кровью (глобальная тема) */
+ :root[data-theme="sauron"]{color-scheme:dark;
+   --bg:#080402;--panel:#170c06;--panel2:#1e0f07;--elev:#26130a;
+   --ink:#f2d9c2;--mut:#b57a4e;--faint:#7a4c2e;--line:rgba(255,90,20,.16);--line2:rgba(255,90,20,.07);
+   --accent:#ff6a1f;--blue:#ff6a1f;--green:#c0532a;--red:#ff3b2a;--grey:#26130a;--purple:#c85a2a;--amber:#ff8a2b;
+   --cat:#241009;
+   --shadow:0 1px 2px rgba(0,0,0,.55),0 22px 50px -16px rgba(150,25,0,.55);}
+ :root[data-theme="sauron"] body{
+   background:radial-gradient(1100px 720px at 88% -12%,rgba(255,80,20,.20),transparent 58%),
+     radial-gradient(950px 620px at 4% 114%,rgba(180,20,0,.20),transparent 60%),
+     radial-gradient(700px 500px at 50% 130%,rgba(255,60,0,.14),transparent 62%),var(--bg) !important;}
+ /* огненный винет поверх всего + пульс */
+ body.sauron-on::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9;
+   box-shadow:inset 0 0 220px rgba(160,20,0,.30),inset 0 -140px 190px -90px rgba(255,60,0,.30);
+   animation:sauronPulse 4.5s ease-in-out infinite}
+ @keyframes sauronPulse{0%,100%{opacity:.72}50%{opacity:1}}
+ /* угли, летящие вверх по всему экрану */
+ .sauron-embers{position:fixed;inset:0;z-index:8;pointer-events:none;overflow:hidden}
+ .sauron-embers i{position:absolute;bottom:-12px;width:3px;height:3px;border-radius:50%;background:#ff7a1f;
+   box-shadow:0 0 7px 1px rgba(255,110,20,.85);opacity:0;animation:sauronEmber linear infinite}
+ @keyframes sauronEmber{0%{transform:translateY(0) translateX(0);opacity:0}
+   12%{opacity:.9}86%{opacity:.65}100%{transform:translateY(-102vh) translateX(var(--dx,20px));opacity:0}}
+ /* активная вкладка Саурона тлеет углём */
+ :root[data-theme="sauron"] .tab.on{box-shadow:0 0 22px -4px rgba(255,90,20,.6)}
  *{box-sizing:border-box}
  html{-webkit-text-size-adjust:100%}
  body{margin:0;min-height:100vh;color:var(--ink);font:14.5px/1.5 var(--font);
@@ -1787,7 +1811,7 @@ const GUIDE_SECTIONS=[
    <p><b>Живая доска целей в стиле Мордора.</b> Впиши ников (по одному в строке) и жми <b>🔥 Разжечь Око</b> — покажет карточки: HP, щит, кулдаун (тикают в реальном времени), уровень и защиту. Данные берутся <b>из локальных файлов кота — ни одного запроса к игре</b>, так что абсолютно не палевно.</p>
    <p><b>🔥 Пнуть</b> — ударить по цели вне очереди. Если идут <b>Набеги</b> — цель бьётся <b>приоритетно</b> (первой, подхват между целями ~30 сек). Если бот в <b>безопасном режиме</b> — <b>немедленный вылет</b> по ней. Работает, только пока кот запущен (Набеги или Безопасный режим) — иначе бить некому.</p>
    <p><b>Карточка с огненной рамкой «⚔ ЦЕЛЬ ОТКРЫТА»</b> — щит спал и КД прошёл, можно бить прямо сейчас.</p>
-   <p><b>👁 Режим Саурона</b> — пасхалка: кот «перевоплощается», в журнале появляются зловещие реплики («ПОКОРЁН», «повержен предо мной»), пульт тлеет огнём. На фарм не влияет — чистый антураж. Выключается тем же тумблером.</p>`],
+   <p><b>👁 Режим Саурона</b> — пасхалка на весь пульт. Тумблер на вкладке «Око»: включаешь — <b>ВЕСЬ пульт становится Мордором</b> (чёрное с огнём и кровью, угли летят по экрану, на всех вкладках), а кот внизу <b>становится злым</b> — чёрный, красные глаза, в огне. В журнале появляются зловещие реплики кота («ПОКОРЁН», «повержен предо мной»). Держится, пока не выключишь тем же тумблером. На фарм не влияет — чистый антураж.</p>`],
  ['🚨','Анти-кража холопа',`
    <p>Если у тебя <b>выкупили холопа</b> (приходит «🪙 У тебя выкупили холопа»), кот <b>мгновенно бросает всё</b> и начинает гонку за возврат — сам, без тебя.</p>
    <p><b>Как работает:</b> жмёт «Выкупить обратно» (платит <b>серебром</b>), холоп снова твой. Защитить сразу нельзя — игра даёт сопернику окно ~23 сек на обратный выкуп. Кот держит холопа, а как окно проходит — ставит «Защитить» (<b>золото</b>, ~120). Соперник успел перекупить — кот выкупает заново. Так до тех пор, пока: холоп <b>защищён</b>, или выпал <b>Волхв</b> (профессия, которую перехватить нельзя — у кого холоп в этот момент, тот и оставил), или прошло 60 сек.</p>
@@ -1854,11 +1878,26 @@ const GUIDE_HTML=`<div class="guide">
 </div>`;
 
 function applyTheme(){
+  const sauron=localStorage.getItem('holop_sauron')==='1';
   const black=localStorage.getItem('holop_theme')==='black';
-  if(black) document.documentElement.setAttribute('data-theme','black');
-  else document.documentElement.removeAttribute('data-theme');   // стандартная (авто свет/тьма)
+  const root=document.documentElement;
+  if(sauron) root.setAttribute('data-theme','sauron');       // 🔥 Саурон перекрывает всё
+  else if(black) root.setAttribute('data-theme','black');
+  else root.removeAttribute('data-theme');                    // стандартная (авто свет/тьма)
+  document.body.classList.toggle('sauron-on', sauron);        // глобальный огонь/угли
+  ensureEmbers();
   const b=document.getElementById('themeBtn');
   if(b) b.textContent=black?'🎨 Обычная тема':'🌑 Чёрная тема';
+}
+function ensureEmbers(){
+  const on=document.body.classList.contains('sauron-on');
+  let box=document.getElementById('sauronEmbers');
+  if(on && !box){
+    box=document.createElement('div'); box.id='sauronEmbers'; box.className='sauron-embers';
+    let h=''; for(let i=0;i<26;i++){ const l=(i*3.9+2)%100,d=(3+(i%6)*0.6),dl=(i*0.5)%5,dx=((i*53)%60-30)+'px';
+      h+='<i style="left:'+l+'%;animation-duration:'+d+'s;animation-delay:'+dl+'s;--dx:'+dx+'"></i>'; }
+    box.innerHTML=h; document.body.appendChild(box);
+  } else if(!on && box){ box.remove(); }
 }
 function toggleTheme(){
   const black=localStorage.getItem('holop_theme')==='black';
@@ -1896,6 +1935,17 @@ async function init(){
   var railCtx=cv.getContext('2d');
   function cssv(n,f){ return (getComputedStyle(document.documentElement).getPropertyValue(n)||'').trim()||f; }
   function isBlack(){ return document.documentElement.getAttribute('data-theme')==='black'; }
+  function isSauron(){ return document.documentElement.getAttribute('data-theme')==='sauron'; }
+  function flames(yo,dx,t){   // 🔥 огонь вокруг злого кота: языки пламени снизу + искры
+    var col=['#7a0d02','#ff3b0a','#ff7a1f','#ffce4d'];
+    var roots=[2,5,8,11,14,17];
+    for(var k=0;k<roots.length;k++){ var x=roots[k]+XO+dx, y=20+yo;
+      var h=2+((t+k*3)%3);
+      for(var i=0;i<=h;i++){ px(x, y-i, col[Math.min(3, i+((t+k)%2))]); }
+    }
+    // искры над головой
+    px(7+XO+dx, ((t)%4)-1+yo, '#ff7a1f'); px(12+XO+dx, ((t+2)%5)-2+yo, '#ffce4d'); px(10+XO+dx, ((t+1)%3)+yo, '#ff3b0a');
+  }
   var acc=cssv('--cat', cssv('--accent','#e6873a'));
   function drk(hex,f){ var n=parseInt(hex.replace('#',''),16); return 'rgb('+Math.round(((n>>16)&255)*f)+','+Math.round(((n>>8)&255)*f)+','+Math.round((n&255)*f)+')'; }
   var P={K:'#241a1e',G:acc,D:drk(acc,.72),C:'#f3e7cf',E:'#3f9fd6',W:'#f6fbff',N:'#cf7280',I:'#e3a6ac',
@@ -1961,6 +2011,9 @@ async function init(){
   function drawScene(ctx, cw, o){
     g=ctx; GW=cw; ctx.clearRect(0,0,cw,ctx.canvas.height);
     refreshCat();                                   // цвет шерсти по теме (на лету)
+    var evil=isSauron();
+    if(evil){ P.E='#ff2a10'; P.W='#ff7e3a'; }       // 🔥 красные горящие глаза
+    else { P.E='#3f9fd6'; P.W='#f6fbff'; }          // обычные глаза
     var id=o.id, working=o.working, sleeping=o.sleeping, ev=o.event, t=o.t;
     var ph=Math.floor(o.roam?t/4:t)%4;
     var bob=working?(ph<2?0:1):(sleeping?2:1);
@@ -1980,6 +2033,7 @@ async function init(){
     else if(id&&id!=='caves'&&!o.roam){ binoc(yo); }
     if(ev&&id==='raids'){ if(ev.kind==='heal') cross(yo); if(ev.kind==='win'||ev.kind==='loot') coins(yo,t); }
     if(isBlack()) ninja(yo,dx);                     // 🥷 в чёрной теме — кот-ниндзя
+    if(evil) flames(yo,dx,t);                        // 🔥 злой кот в огне
   }
 
   function label(id,working,sleeping,ev){
@@ -2171,7 +2225,10 @@ const OKO = (function(){
   }
   function applySauron(){
     const w=document.getElementById('okoWrap'); if(w)w.classList.toggle('sauron',sauron);
-    document.body.classList.toggle('sauron-on',sauron);
+    localStorage.setItem('holop_sauron', sauron?'1':'0');
+    if(typeof applyTheme==='function') applyTheme();   // 🔥 весь пульт → Мордор (глобальная тема)
+    else document.body.classList.toggle('sauron-on',sauron);
+    ensureEmbers();
   }
 
   return {
@@ -2295,7 +2352,7 @@ const OKO = (function(){
       active=false;
       if(eyeTimer)clearInterval(eyeTimer); if(pollTimer)clearInterval(pollTimer); if(tickTimer)clearInterval(tickTimer);
       eyeTimer=pollTimer=tickTimer=null;
-      document.body.classList.remove('sauron-on');
+      // режим Саурона НЕ снимаем — он глобальный и держится на всех вкладках (снять — тумблером).
     },
     ignite(){
       const ta=document.getElementById('okoTa'); const txt=ta?ta.value:'';
