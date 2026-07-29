@@ -469,6 +469,7 @@ class Smasher:
         self.stats = {"hits": 0, "wins": 0, "blocked": 0, "loss": 0, "loot": 0, "rep": 0.0}
         self._paused_note = False
         self._last_heartbeat = 0.0
+        self._last_progress = time.time()   # маркер живости для сторожа-watchdog (зависы реконнекта)
         self._started = 0.0      # время старта боевой сессии (для итогового отчёта)
         self.peer = None   # кэш entity бота (резолвим один раз)
         self._healing = False    # режим лечения: не атакуем, перечитываем реальное HP
@@ -772,6 +773,7 @@ class Smasher:
         return t_target
 
     async def pause(self):
+        self._last_progress = time.time()   # живость для сторожа
         await asyncio.sleep(random.uniform(self.lo, self.hi))
         # 🚨 угон холопа мог прийти событием в ЛЮБОЙ момент — подхватываем флаг прямо в паузе
         # между действиями (это проверка в памяти, БЕЗ сети). Гард `_theft_busy` внутри тика.
@@ -1058,6 +1060,7 @@ class Smasher:
     async def gate(self):
         """Дождаться состояния run. Вернуть 'run' или 'stop'. Во время pause крутимся вхолостую."""
         while True:
+            self._last_progress = time.time()   # живость для сторожа (на паузе тоже живы)
             st = self.control_state()
             if st == "run":
                 if self._paused_note:
@@ -1077,6 +1080,7 @@ class Smasher:
         """Спать, но просыпаться рано, если пульт переключили (pause/stop). Вернуть состояние."""
         end = time.time() + seconds
         while time.time() < end:
+            self._last_progress = time.time()   # живость для сторожа (нормальный сон — не зависание)
             st = self.control_state()
             if st != "run":
                 return st
@@ -2217,6 +2221,8 @@ class Smasher:
         deadline = time.time() + 90.0
         won = False
         while time.time() < deadline:
+            if self.control_state() != "run":   # пульт попросил стоп/паузу — прерываем гонку
+                break
             m = self._theft_latest(await self.recent(10))
             if not m:
                 await rsleep(2)
@@ -2602,6 +2608,18 @@ class Smasher:
                        "и галочку «брать золото из казны».")
         return False
 
+    async def _watchdog(self):
+        """Сторож против ЗАВИСАНИЯ (напр. Telethon застрял на переподключении — реально было:
+        смашер висел 40 мин, не фармил и не убивался). Если главный цикл не подаёт признаков
+        жизни ~8 мин — выходим ЖЁСТКО (ночной сторож / лаунчер перезапустит; либо Владимир сам)."""
+        while True:
+            await asyncio.sleep(60)
+            stale = time.time() - self._last_progress
+            if stale > 480 and self.control_state() == "run":
+                log(f"🐕 Сторож: {stale/60:.0f} мин без активности (завис на связи?) — "
+                    "выхожу жёстко для перезапуска.")
+                os._exit(1)
+
     def heartbeat(self):
         now = time.time()
         if now - self._last_heartbeat < self.s["heartbeat_min"] * 60:
@@ -2705,6 +2723,8 @@ class Smasher:
         if self._auto_guard:
             log("🛡️ Авто-защита холопов ВКЛ — держу охрану на холопах (проверяю ~раз в час).")
         await self.remote_init()   # 🎮 удалёнка: запомнить хвост Избранного + прислать помощь
+        self._last_progress = time.time()
+        asyncio.ensure_future(self._watchdog())   # 🐕 сторож против зависания на реконнекте
         # 🚨 АНТИ-КРАЖА: вешаем ТРИГГЕР НА СООБЩЕНИЕ @holop (событие Telethon) — уведомление
         # угона взводит флаг мгновенно, БЕЗ опроса сети. Отбой запустит цикл в ближайшей паузе.
         if self._holop_guard:
@@ -3213,13 +3233,25 @@ async def main():
 
     # Мягкая остановка по SIGTERM/SIGINT: пишем 'stop' в пульт, чтобы бот доиграл
     # текущее действие, корректно вышел через gate() и НАПЕЧАТАЛ итоговый отчёт.
+    _stop_hits = [0]
     def _soft_stop():
-        log("📴 Получен сигнал остановки — доигрываю и печатаю отчёт…")
+        _stop_hits[0] += 1
         try:
             with open(bot.control_path, "w", encoding="utf-8") as f:
                 f.write("stop")
         except OSError:
             pass
+        if _stop_hits[0] >= 2:      # повторный сигнал — не тянем, выходим немедленно
+            log("📴 Повторный сигнал остановки — выхожу немедленно.")
+            os._exit(0)
+        log("📴 Получен сигнал остановки — доигрываю (жёсткий выход через 8с, если завис)…")
+        # ПОДСТРАХОВКА: если главный цикл завис (напр. на переподключении) и не вышел штатно
+        # за 8с — выходим ЖЁСТКО. Иначе процесс висел и не убивался (жалоба Владимира).
+        try:
+            loop.call_later(8, lambda: (log("📴 Штатно не вышел за 8с — выхожу жёстко."),
+                                        os._exit(0)))
+        except Exception:
+            os._exit(0)
     loop = asyncio.get_running_loop()
     for _sig in (signal.SIGTERM, signal.SIGINT):
         try:

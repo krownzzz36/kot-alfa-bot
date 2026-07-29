@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-47"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-48"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -125,7 +125,9 @@ def _pid_alive(pid, needle=None):
 
 
 def _terminate(pid):
-    """Мягко/жёстко погасить процесс (и его детей) кросс-платформенно."""
+    """Мягко, потом ЖЁСТКО погасить процесс кросс-платформенно. SIGTERM → ждём до ~4с →
+    SIGKILL. Смашер мог зависнуть на переподключении и НЕ отреагировать на мягкий сигнал —
+    поэтому обязательно добиваем SIGKILL (его игнорировать нельзя). Иначе «Стоп» не работал."""
     if not pid:
         return
     if IS_WIN:
@@ -134,6 +136,16 @@ def _terminate(pid):
         return
     try:
         os.kill(int(pid), signal.SIGTERM)
+    except OSError:
+        return                       # уже мёртв
+    for _ in range(8):               # ждём штатного выхода до ~4с
+        time.sleep(0.5)
+        try:
+            os.kill(int(pid), 0)     # жив?
+        except OSError:
+            return                   # умер сам — отлично
+    try:
+        os.kill(int(pid), signal.SIGKILL)   # завис — добиваем намертво
     except OSError:
         pass
 NIGHT_SH = os.path.join(HERE, "night_smash.sh")   # ночной режим: caffeinate + сторож смашера
@@ -562,7 +574,7 @@ def raids_stop():
     _terminate(read_pid("raids"))
     if not IS_WIN:
         try:
-            subprocess.run(["pkill", "-f", SMASH_PATH],   # полный путь — не задеть другой аккаунт
+            subprocess.run(["pkill", "-9", "-f", SMASH_PATH],   # полный путь (-9): не задеть чужой аккаунт
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -800,7 +812,7 @@ def stop_all():
     else:
         for s in BOT_SCRIPTS:
             try:
-                subprocess.run(["pkill", "-f", _script_path(s)],   # только боты ЭТОЙ папки
+                subprocess.run(["pkill", "-9", "-f", _script_path(s)],   # -9: добить зависших ботов ЭТОЙ папки
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
