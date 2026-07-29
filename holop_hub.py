@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-49"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-50"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -342,7 +342,7 @@ MODULES = [
     },
     {
         "id": "oko", "title": "Око Саурона", "emoji": "🔥", "kind": "oko",
-        "desc": "Бета. Мордор следит. Вписывай ников — Око покажет их живьём (HP/щит/КД) и даст «пнуть». Данные локальные, без запросов к игре.",
+        "desc": "Бета. Мордор следит. Вписывай ников — Око само зайдёт на каждого, прочитает HP/атаку/защиту/щиты с таймерами. Кнопки «Обновить» и «Пнуть».",
     },
     {
         "id": "roles", "title": "Роли холопов", "emoji": "🎭", "kind": "oneshot",
@@ -954,9 +954,55 @@ def oko_cards(nicks):
 
 
 def oko_cards_saved():
+    """Карточки Ока: разведанные смашером данные (oko_cards.json) по списку целей (oko_targets)."""
     nicks = [x.split("#", 1)[0].strip()
              for x in load_oko_targets().splitlines() if x.split("#", 1)[0].strip()]
-    return oko_cards(nicks)
+    try:
+        with open(path("oko_cards.json"), encoding="utf-8") as f:
+            scouted = json.load(f)
+        if not isinstance(scouted, dict):
+            scouted = {}
+    except (OSError, ValueError, TypeError):
+        scouted = {}
+    cards = [scouted.get(n) or {"name": n, "status": "ещё не разведан"} for n in nicks]
+    s = load_smash_settings()
+    return {"cards": cards, "now": time.time(),
+            "running": is_running("raids"),
+            "defense_only": bool(s.get("defense_only")),
+            "sauron": bool(s.get("sauron_mode"))}
+
+
+def oko_scout(nicks):
+    """Записать ников на разведку — смашер подхватит (Разжечь Око / Обновить)."""
+    try:
+        with open(path("oko_scout_req.txt"), "a", encoding="utf-8") as f:
+            for n in nicks or []:
+                n = (n or "").strip()
+                if n:
+                    f.write(n + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def oko_remove(name):
+    """Убрать цель из списка Ока (oko_targets) и из карточек (oko_cards.json)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    keep = [l for l in load_oko_targets().splitlines()
+            if l.split("#", 1)[0].strip() and l.split("#", 1)[0].strip() != name]
+    save_oko_targets(("\n".join(keep) + "\n") if keep else "")
+    try:
+        with open(path("oko_cards.json"), encoding="utf-8") as f:
+            cards = json.load(f)
+        if isinstance(cards, dict) and name in cards:
+            del cards[name]
+            with open(path("oko_cards.json"), "w", encoding="utf-8") as f:
+                json.dump(cards, f, ensure_ascii=False, indent=2)
+    except (OSError, ValueError, TypeError):
+        pass
+    return True
 
 
 # ─────────────── HTTP ───────────────
@@ -1079,6 +1125,10 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"ok": oko_hit(body.get("name", ""))})
             if act == "sauron":
                 return self._json({"ok": oko_set_sauron(bool(body.get("on")))})
+            if act == "scout":
+                return self._json({"ok": oko_scout(body.get("nicks") or [])})
+            if act == "remove":
+                return self._json({"ok": oko_remove(body.get("name", ""))})
         if len(parts) == 3 and parts[0] == "api":
             mid, action = parts[1], parts[2]
             if mid == "raids" and action == "start":
@@ -2054,37 +2104,57 @@ const OKO = (function(){
     px(5,11,tusk);px(8,11,tusk);                                 // клыки
   }
 
-  function timerHTML(c,now){
-    if(c.shield_until>now) return '🛡 щит '+fmt(c.shield_until-now);
-    if(c.cd_until>now)     return '⌛ КД '+fmt(c.cd_until-now);
+  function fmtAbs(until){ const d=new Date(until*1000),p=n=>(''+n).padStart(2,'0'); return p(d.getHours())+':'+p(d.getMinutes()); }
+  function estHp(c,now){ if(c.hp==null)return null; const e=c.hp+Math.max(0,(now-(c.scouted_at||now))/60); return Math.max(0,Math.min(100,Math.round(e))); }
+  const BLOCKED=/недоступ|клан|уровень|не найден|совпад|разведан|ошибк/i;
+  function isOpen(c,now){ return c.status==='открыт'||(c.cd_until<=now&&c.shield_until<=now&&c.status&&!BLOCKED.test(c.status)); }
+  function headTimer(c,now){
+    if(c.shield_until>now) return '🛡 '+(c.shield_name?esc(c.shield_name)+' ':'щит ')+fmt(c.shield_until-now)+' <span class="oko-abs">до '+fmtAbs(c.shield_until)+'</span>';
+    if(c.cd_until>now)     return '⌛ КД '+fmt(c.cd_until-now)+' <span class="oko-abs">до '+fmtAbs(c.cd_until)+'</span>';
+    if(c.status&&BLOCKED.test(c.status)) return '<span class="oko-blk">'+esc(c.status)+'</span>';
+    if(c.status==='слаб') return '💤 слаб (HP низкий)';
     return '<b class="open-lbl">⚔ ЦЕЛЬ ОТКРЫТА</b>';
   }
+  function stsHTML(c,now){
+    if(!c.statuses||!c.statuses.length)return '';
+    return '<div class="oko-sts">'+c.statuses.map(x=>{
+      const left=(x.until>now)?fmt(x.until-now):'—', cnt=(x.count!=null)?' <b>×'+x.count+'</b>':'';
+      return '<div class="oko-st"><span class="oko-st-n">'+esc(x.name)+cnt+'</span><span class="oko-st-t">'+left+'</span></div>';
+    }).join('')+'</div>';
+  }
   function cardHTML(c,i,now){
-    const hp=(c.hp==null)?null:Math.max(0,Math.min(100,c.hp));
-    const opened=(c.cd_until<=now&&c.shield_until<=now);
-    return `<div class="oko-card${opened?' open':''}" id="okoc${i}">
+    const hp=estHp(c,now);
+    return `<div class="oko-card${isOpen(c,now)?' open':''}" id="okoc${i}">
+      <button class="oko-x" title="Убрать карточку" onclick="OKO.remove(${i})">✖</button>
       <canvas class="oko-orc" width="14" height="15" data-n="${esc(c.name)}"></canvas>
       <div class="oko-body">
         <div class="oko-nick">${esc(c.name)}</div>
         <div class="oko-hp"><i style="width:${hp==null?0:hp}%"></i><span>${hp==null?'HP ?':hp+' HP'}</span></div>
-        <div class="oko-meta">${c.level?('ур.'+c.level):'ур.?'} · защ.${c.defense!=null?c.defense:'?'}${(c.state&&/побед|снят|недоступ/i.test(c.state))?(' · '+esc(c.state)):''}</div>
-        <div class="oko-timer" id="okot${i}">${timerHTML(c,now)}</div>
+        <div class="oko-meta">${c.level?('ур.'+c.level):'ур.?'} · ⚔${c.attack!=null?c.attack:'?'} · 🛡${c.defense!=null?c.defense:'?'}</div>
+        <div class="oko-timer" id="okot${i}">${headTimer(c,now)}</div>
+        <div id="okost${i}">${stsHTML(c,now)}</div>
       </div>
-      <button class="oko-hit" onclick="OKO.hit(${i},this)">🔥 ПНУТЬ</button>
+      <div class="oko-btns2">
+        <button class="oko-upd" onclick="OKO.refresh(${i},this)">🔄 Обновить</button>
+        <button class="oko-hit" onclick="OKO.hit(${i},this)">🔥 Пнуть</button>
+      </div>
     </div>`;
   }
 
   function render(){
     const wrap=document.getElementById('okoGrid'); if(!wrap)return;
     const now=Date.now()/1000;
-    if(!cards.length){ wrap.innerHTML='<div class="oko-empty">Око пусто. Впиши имена жертв и разожги Око.</div>'; return; }
+    if(!cards.length){ wrap.innerHTML='<div class="oko-empty">Око пусто. Впиши имена жертв и разожги Око — он сам зайдёт на каждого и соберёт разведку.</div>'; return; }
     wrap.innerHTML=cards.map((c,i)=>cardHTML(c,i,now)).join('');
     wrap.querySelectorAll('.oko-orc').forEach(cv=>drawOrc(cv,cv.dataset.n));
   }
   function tick(){
     const now=Date.now()/1000;
-    cards.forEach((c,i)=>{ const el=document.getElementById('okot'+i); if(el)el.innerHTML=timerHTML(c,now);
-      const cd=document.getElementById('okoc'+i); if(cd)cd.classList.toggle('open',c.cd_until<=now&&c.shield_until<=now); });
+    cards.forEach((c,i)=>{ const el=document.getElementById('okot'+i); if(el)el.innerHTML=headTimer(c,now);
+      const st=document.getElementById('okost'+i); if(st)st.innerHTML=stsHTML(c,now);
+      const cd=document.getElementById('okoc'+i); if(cd)cd.classList.toggle('open',isOpen(c,now));
+      const h=estHp(c,now),hb=cd&&cd.querySelector('.oko-hp'); if(hb){const b=hb.querySelector('i'),s=hb.querySelector('span'); if(b)b.style.width=(h==null?0:h)+'%'; if(s)s.textContent=(h==null?'HP ?':h+' HP');}
+    });
   }
   async function fetchCards(){
     try{ const r=await fetch('/api/oko/cards'); const d=await r.json();
@@ -2140,22 +2210,37 @@ const OKO = (function(){
       .oko-mode{margin-top:10px;color:#c79a72;font-size:12px;text-align:center;min-height:16px}
       .oko-grid{position:relative;z-index:2;margin-top:20px;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
       .oko-empty{grid-column:1/-1;text-align:center;color:#7d5f48;padding:26px;font-size:13px}
-      .oko-card{position:relative;display:grid;grid-template-columns:34px 1fr;grid-template-rows:auto auto;gap:3px 11px;
-        background:linear-gradient(160deg,#1a0f09,#120b07);border:1px solid rgba(255,110,40,.16);border-radius:12px;padding:12px 12px 52px;
+      .oko-card{position:relative;display:grid;grid-template-columns:34px 1fr;gap:3px 11px;align-items:start;
+        background:linear-gradient(160deg,#1a0f09,#120b07);border:1px solid rgba(255,110,40,.16);border-radius:12px;padding:12px;
         transition:.18s;overflow:hidden}
       .oko-card::before{content:'';position:absolute;inset:0;background:radial-gradient(80% 60% at 50% 120%,rgba(255,70,10,.10),transparent);pointer-events:none}
       .oko-card.open{border-color:rgba(255,110,30,.6);box-shadow:0 0 0 1px rgba(255,110,30,.35),0 0 26px -6px rgba(255,90,20,.55)}
-      .oko-orc{grid-row:1/3;width:34px;height:37px;image-rendering:pixelated;align-self:start;filter:drop-shadow(0 1px 2px #000)}
-      .oko-nick{font-weight:800;color:#ffdca8;font-family:var(--font);font-size:15px;letter-spacing:.02em;word-break:break-word}
+      .oko-x{position:absolute;top:6px;right:8px;z-index:3;width:22px;height:22px;border:none;border-radius:6px;cursor:pointer;
+        background:rgba(255,60,30,.14);color:#ff8a5a;font-size:12px;line-height:1;transition:.14s}
+      .oko-x:hover{background:rgba(255,60,30,.34);color:#fff}
+      .oko-orc{width:34px;height:37px;image-rendering:pixelated;align-self:start;filter:drop-shadow(0 1px 2px #000)}
+      .oko-body{min-width:0}
+      .oko-nick{font-weight:800;color:#ffdca8;font-family:var(--font);font-size:15px;letter-spacing:.02em;word-break:break-word;padding-right:22px}
       .oko-hp{position:relative;height:13px;border-radius:7px;background:#2a0d0d;overflow:hidden;margin:4px 0 2px;border:1px solid rgba(255,80,40,.2)}
-      .oko-hp i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#8a1010,#ff3b2a);border-radius:7px}
+      .oko-hp i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#8a1010,#ff3b2a);border-radius:7px;transition:width .5s}
       .oko-hp span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;text-shadow:0 1px 2px #000;letter-spacing:.04em}
-      .oko-meta{grid-column:2;color:#a9805f;font-size:11px;letter-spacing:.02em}
-      .oko-timer{grid-column:1/3;margin-top:7px;color:#d7a679;font-size:12.5px;letter-spacing:.03em}
-      .oko-timer .open-lbl{color:#ff6a1f;text-shadow:0 0 10px rgba(255,90,20,.6);font-family:var(--font);letter-spacing:.08em}
-      .oko-hit{position:absolute;left:12px;right:12px;bottom:12px;cursor:pointer;border:none;border-radius:9px;padding:9px;
-        font-family:var(--font);font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-size:12px;color:#210c02;
-        background:linear-gradient(180deg,#ffb14a,#ff6a1f 60%,#c93408);box-shadow:0 4px 14px -4px rgba(255,90,20,.7);transition:.14s}
+      .oko-meta{color:#a9805f;font-size:11px;letter-spacing:.02em;margin-top:1px;font-variant-numeric:tabular-nums}
+      .oko-timer{margin-top:7px;color:#d7a679;font-size:12.5px;letter-spacing:.03em}
+      .oko-timer .open-lbl{color:#ff6a1f;text-shadow:0 0 10px rgba(255,90,20,.6);font-family:var(--font);letter-spacing:.06em}
+      .oko-abs{color:#8f6f52;font-size:10.5px}
+      .oko-blk{color:#8a6a5a}
+      .oko-sts{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+      .oko-st{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:#c6976e;
+        background:rgba(255,110,40,.06);border:1px solid rgba(255,110,40,.10);border-radius:6px;padding:3px 7px}
+      .oko-st-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .oko-st-t{color:#e0a878;font-variant-numeric:tabular-nums;flex:none}
+      .oko-btns2{grid-column:1/3;display:flex;gap:8px;margin-top:11px}
+      .oko-upd,.oko-hit{flex:1;cursor:pointer;border:none;border-radius:9px;padding:9px;font-family:var(--font);
+        font-weight:800;letter-spacing:.05em;font-size:12px;transition:.14s}
+      .oko-upd{background:#241811;color:#e7b98a;border:1px solid rgba(255,140,60,.28)}
+      .oko-upd:hover{background:#2e2016}
+      .oko-upd:disabled{opacity:.55;cursor:default}
+      .oko-hit{color:#210c02;background:linear-gradient(180deg,#ffb14a,#ff6a1f 60%,#c93408);box-shadow:0 4px 14px -4px rgba(255,90,20,.7)}
       .oko-hit:hover{filter:brightness(1.08)}
       .oko-hit:active{transform:translateY(1px)}
       .oko-hit.done{background:linear-gradient(180deg,#6d5a3a,#4a3a24);color:#e9d8c4;box-shadow:none}
@@ -2214,16 +2299,28 @@ const OKO = (function(){
     },
     ignite(){
       const ta=document.getElementById('okoTa'); const txt=ta?ta.value:'';
+      const nicks=txt.split('\n').map(s=>s.split('#')[0].trim()).filter(Boolean);
       fetch('/api/oko/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:txt})})
-        .then(()=>{ fetchCards();
-          if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchCards,4000);
+        .then(()=>{
+          if(nicks.length) fetch('/api/oko/scout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nicks})}).catch(()=>{});
+          fetchCards();
+          if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(fetchCards,3500);
           if(tickTimer)clearInterval(tickTimer); tickTimer=setInterval(tick,1000);
         }).catch(()=>{});
+    },
+    refresh(i,btn){
+      const c=cards[i]; if(!c)return;
+      if(btn){btn.disabled=true;const o=btn.textContent;btn.textContent='🔄 разведываю…';setTimeout(()=>{if(btn){btn.disabled=false;btn.textContent=o;}},6000);}
+      fetch('/api/oko/scout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nicks:[c.name]})}).catch(()=>{});
+    },
+    remove(i){
+      const c=cards[i]; if(!c)return;
+      fetch('/api/oko/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.name})}).then(()=>fetchCards()).catch(()=>{});
     },
     hit(i,btn){
       const c=cards[i]; if(!c)return;
       fetch('/api/oko/hit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.name})})
-        .then(r=>r.json()).then(d=>{ if(btn){btn.classList.add('done');btn.textContent='🔥 ОКО ОБРАЩЕНО';setTimeout(()=>{btn.classList.remove('done');btn.textContent='🔥 ПНУТЬ';},2600);} })
+        .then(r=>r.json()).then(d=>{ if(btn){btn.classList.add('done');btn.textContent='🔥 ОБРАЩЁН';setTimeout(()=>{btn.classList.remove('done');btn.textContent='🔥 Пнуть';},2600);} })
         .catch(()=>{});
     },
     sauron(on){

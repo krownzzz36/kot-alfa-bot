@@ -241,6 +241,39 @@ def parse_shield_seconds(profile_text):
     return parse_duration(m.group(1))
 
 
+STATUS_LINE_RE = re.compile(r"^•\s*(.+?)\s*(?:×\s*(\d+)\s*)?—\s*(.+?)\s*$")
+
+
+def parse_profile_statuses(profile_text):
+    """Список активных статусов/щитов/бонусов из блока «🛡️ Статус» профиля:
+    [{name, count, secs, raw}]. Строки вида «• 👥 Ополченцы ×999 — 7ч 18мин» /
+    «• 💪 Дух дружины +10% — 3ч 23мин»."""
+    out, started = [], False
+    for ln in (profile_text or "").splitlines():
+        s = ln.strip()
+        if not started:
+            if "Статус" in s:
+                started = True
+            continue
+        if not s:
+            continue
+        if not s.startswith("•"):
+            break                       # блок статусов кончился (пошёл след. раздел)
+        m = STATUS_LINE_RE.match(s)
+        if m:
+            out.append({"name": m.group(1).strip(),
+                        "count": int(m.group(2)) if m.group(2) else None,
+                        "secs": parse_duration(m.group(3)) or 0,
+                        "raw": s.lstrip("• ").strip()})
+    return out
+
+
+def parse_profile_combat(profile_text):
+    """Эффективные атака/защита из профиля («Атака: X → Y  Защита: X → Y») → (atk, def) или (None,None)."""
+    m = re.search(r"Атака:\s*\d+\s*→\s*(\d+)\s+Защита:\s*\d+\s*→\s*(\d+)", profile_text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
 # маркеры исхода боя (словарь classify_result из holop_raid неполон — уточняем локально)
 ABSORB_WORDS = ("частокол", "поглотил", "выдержал", "заряд")   # защита поглотила удар — НЕ проигрыш, HP цел
 # донатная физическая защита (Железный Купол / Стена) — жрёт требушеты, бить бессмысленно
@@ -464,6 +497,8 @@ class Smasher:
         self._cd_saved_at = 0.0
         self._shielded = self._load_shielded()  # ник -> epoch спадения щита (парковка щитовиков)
         self.oko_hits_path = os.path.join(HERE, "oko_hits.txt")  # 🔥 Око Саурона: ники, которых «пнули» из панели
+        self.oko_scout_req_path = os.path.join(HERE, "oko_scout_req.txt")  # 🔥 Око: ники на РАЗВЕДКУ (панель просит)
+        self.oko_cards_path = os.path.join(HERE, "oko_cards.json")  # 🔥 Око: разведанные карточки (пишет смашер, читает панель)
         self._oko_prio = []      # очередь приоритетных ударов из Ока (боевой режим)
         self._sauron = False     # 🔥 режим Саурона: зловещие реплики кота (пасхалка, тумблер в панели)
         self.stats = {"hits": 0, "wins": 0, "blocked": 0, "loss": 0, "loot": 0, "rep": 0.0}
@@ -653,6 +688,142 @@ class Smasher:
                     raise
                 log(f"  ⚠️ Око-удар по {n} сбой: {type(e).__name__}: {e}")
         return len(hits)
+
+    # ---------- 🔥 ОКО САУРОНА: РАЗВЕДКА ЦЕЛЕЙ (арена + профиль) → карточки ----------
+    def _read_oko_scout_req(self):
+        """Прочитать и очистить oko_scout_req.txt — ники, которых панель просит разведать."""
+        try:
+            with open(self.oko_scout_req_path, encoding="utf-8") as f:
+                raw = [ln.strip() for ln in f if ln.strip()]
+        except OSError:
+            return []
+        if raw:
+            try:
+                open(self.oko_scout_req_path, "w", encoding="utf-8").close()
+            except OSError:
+                pass
+        seen, out = set(), []
+        for n in raw:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        return out
+
+    def _load_oko_cards(self):
+        try:
+            with open(self.oko_cards_path, encoding="utf-8") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _save_oko_cards(self, cards):
+        try:
+            with open(self.oko_cards_path, "w", encoding="utf-8") as f:
+                json.dump(cards, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    async def _scout_card(self, nick):
+        """Разведать ОДНУ цель: АРЕНА (HP/уровень/статус открыт/КД/слаб) + ПРОФИЛЬ (атака,
+        защита, полный блок статусов: щиты/ополченцы/бонусы + таймеры). Вернуть карточку."""
+        now = time.time()
+        card = {"name": nick, "hp": None, "level": None, "defense": None, "attack": None,
+                "status": "", "cd_until": 0.0, "shield_until": 0.0, "shield_name": "",
+                "statuses": [], "scouted_at": now}
+        # 1) АРЕНА — HP, уровень, статус кнопки (открыт / КД / щит / слаб)
+        try:
+            res = await self.arena_search(nick)
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            res = None
+        if res:
+            blocks = parse_arena_targets(res.message or "")
+            positions = target_positions(self.flat_buttons(res))
+            idx = exact_target(blocks, nick)
+            if idx is not None and idx < len(positions):
+                b = blocks[idx]
+                btn = positions[idx][2]
+                card["hp"] = b.get("hp")
+                card["level"] = b.get("level")
+                card["defense"] = b.get("defense")
+                if button_attackable(btn):
+                    card["status"] = "открыт"
+                else:
+                    reason = classify_block_reason(btn)
+                    if reason == "cooldown":
+                        card["cd_until"] = now + (parse_duration(btn) or 0)
+                        card["status"] = "КД"
+                    elif reason == "shield":
+                        card["shield_name"] = btn.split("•", 1)[-1].strip() if "•" in btn else "щит"
+                        card["status"] = "щит"
+                    elif reason == "weak":
+                        card["status"] = "слаб"
+                    else:
+                        card["status"] = "недоступен (клан/уровень)"
+            else:
+                card["status"] = "нет совпадения на арене"
+        else:
+            card["status"] = "не найден на арене"
+        # 2) ПРОФИЛЬ — атака/защита + весь блок статусов (щиты/ополченцы/бонусы + таймеры)
+        try:
+            prof = await self.read_profile(nick)
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            prof = None
+        if prof:
+            atk, dfn = parse_profile_combat(prof)
+            if atk:
+                card["attack"] = atk
+            if dfn:
+                card["defense"] = dfn          # профильная защита точнее арены
+            sts = parse_profile_statuses(prof)
+            card["statuses"] = [{"name": x["name"], "count": x["count"], "until": now + x["secs"]}
+                                for x in sts]
+            # главный «щит» для заголовочного таймера — самый долгий защитный статус
+            shield_secs = 0
+            for x in sts:
+                low = x["name"].lower()
+                if any(w in low for w in ("щит", "oboz", "обоз", "купол", "стена", "поле", "ополчен")):
+                    shield_secs = max(shield_secs, x["secs"])
+            if shield_secs > 0 and card["shield_until"] < now + shield_secs:
+                card["shield_until"] = now + shield_secs
+        return card
+
+    async def scout_oko(self, nicks):
+        """Разведать список ников → обновить oko_cards.json (мержим, чужие карточки не трогаем)."""
+        if not nicks:
+            return
+        log(f"  🔍 Око: разведываю {len(nicks)} цел(ей): {', '.join(nicks)}")
+        cards = self._load_oko_cards()
+        for n in nicks:
+            if self.control_state() != "run":
+                break
+            try:
+                cards[n] = await self._scout_card(n)
+                st = cards[n].get("status", "")
+                extra = ""
+                if cards[n].get("shield_until"):
+                    extra = f" ~{fmt_secs(cards[n]['shield_until'] - time.time())}"
+                elif cards[n].get("cd_until"):
+                    extra = f" ~{fmt_secs(cards[n]['cd_until'] - time.time())}"
+                log(f"    👁 {n}: {st}{extra}  HP {cards[n].get('hp')}")
+            except Exception as e:
+                if _is_dead_session(e):
+                    raise
+                log(f"    ⚠️ Око-разведка {n} сбой: {type(e).__name__}: {e}")
+            self._save_oko_cards(cards)   # пишем по ходу — панель видит прогресс
+            await self.pause()
+
+    async def _oko_scout_tick(self):
+        """Между целями: если панель просила разведать — разведать (Разжечь Око / Обновить)."""
+        req = self._read_oko_scout_req()
+        if not req:
+            return False
+        await self.scout_oko(req)
+        return True
 
     def _sauron_roar(self, name, loot):
         """Зловещая реплика Саурона после победы (только когда режим включён — пасхалка)."""
@@ -1085,6 +1256,8 @@ class Smasher:
             if st != "run":
                 return st
             await self._theft_guard_tick()   # 🚨 ловим угон холопа и во время снов/наплывов
+            if not self._theft_busy:
+                await self._oko_scout_tick()   # 🔍 Око: разведать по запросу и во время снов
             await asyncio.sleep(min(3, end - time.time()))
         return "run"
 
@@ -1603,9 +1776,9 @@ class Smasher:
             await rsleep(0.5)
         return None
 
-    # ---------- профиль цели (для таймера щита) ----------
-    async def shield_seconds(self, name):
-        """Территория → Найти → ник → кнопка точного совпадения → профиль → остаток щита (сек) или None."""
+    # ---------- профиль цели (Территория → Найти → ник → профиль) ----------
+    async def read_profile(self, name):
+        """Открыть профиль цели и вернуть ТЕКСТ профиля (щиты/статусы/атака/защита) или None."""
         await self.send("Территория")
         terr = None
         for _ in range(12):
@@ -1647,11 +1820,15 @@ class Smasher:
         await self.click(lst, pos[0], pos[1], label=f"Профиль {name}")
         for _ in range(14):
             m = await self.refetch(lst.id)   # профиль приходит правкой того же сообщения
-            t = m.message or ""
+            t = (m.message or "") if m else ""
             if "Статус" in t or "БОЕВАЯ СТАТИСТИКА" in t:
-                return parse_shield_seconds(t)
+                return t
             await rsleep(0.5)
         return None
+
+    async def shield_seconds(self, name):
+        """Остаток щита из профиля (сек) или None — через read_profile."""
+        return parse_shield_seconds(await self.read_profile(name) or "")
 
     # ---------- удар ----------
     def _is_result(self, text, msg):
@@ -2900,6 +3077,8 @@ class Smasher:
             # 🔥 ОКО САУРОНА: набеги не активны → «пнуть» = немедленный вылет, потом снова сторожим
             if await self._oko_sortie():
                 return None
+            if await self._oko_scout_tick():   # 🔍 разведка целей по запросу панели
+                return None
             return await self.sleep_gated(random.uniform(20, 40))
         # 🐴 АВТО-ОБОЗ (+50% серебра С НАБЕГОВ — только боевой режим). Сверяется с файлом.
         if self._auto_oboz:
@@ -3020,6 +3199,7 @@ class Smasher:
             if await self._bomb_guard_tick():
                 return None   # 💣 бочка важнее набега — обработали, прерываем проход
             await self._oko_sortie()   # 🔥 Око: пнули из панели → бьём немедленно, между целями
+            await self._oko_scout_tick()   # 🔍 Око: разведать цели по запросу панели (Разжечь/Обновить)
             my_after = await self.do_target(t)
             if t in self._oko_prio:
                 self._oko_prio.remove(t)     # 🔥 пнутую отработали — снимаем с приоритета
