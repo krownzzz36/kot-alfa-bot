@@ -1494,6 +1494,7 @@ class Smasher:
     async def collect_and_bank(self):
         """Собрать доход (Территория+Холопы) → положить всё в казну → реинвест (серебро+золото)."""
         log("🏦 Авто-казна: собираю доход и несу в казну…")
+        g0, s0 = await self.my_balance()          # баланс ДО сбора — чтобы показать, сколько собрали
         terr = await self.open_territory()
         if terr:
             await self.click_text(terr, "Собрать", label="Собрать доход (серебро)")
@@ -1503,11 +1504,16 @@ class Smasher:
         if hol:
             await self.click_text(hol, "Собрать", label="Собрать золото")
             await rsleep(1.0)
+        g1, s1 = await self.my_balance()          # баланс ПОСЛЕ сбора
+        got_s, got_g = max(0, s1 - s0), max(0, g1 - g0)
+        log(f"  💰 Собрал доход: +{got_s:,} серебра, +{got_g:,} золота".replace(",", " "))
         await self._bank_currency("Серебро")
         if getattr(self, "_bank_gold", False):
             await self._bank_currency("Золото")   # только если включена галочка «класть золото в казну»
+            log(f"  🏦 Положил в казну: {s1:,} серебра + {g1:,} золота → реинвест дохода.".replace(",", " "))
         else:
-            log("  💰 золото НЕ кладу в казну (галочка выкл) — оставляю свободным на оборону/покупки")
+            log(f"  🏦 Положил в казну: {s1:,} серебра → реинвест. Золото ({g1:,}) оставил на балансе "
+                f"(оборона/покупки).".replace(",", " "))
         self._last_bank = time.time()
         self._next_bank = time.time() + 3600 + random.uniform(-600, 600)   # раз в ~час ± 10 мин
         log("🏦 Авто-казна: готово.")
