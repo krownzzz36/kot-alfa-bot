@@ -2237,9 +2237,14 @@ class Smasher:
                 if m.out or m.id in self._bomb_done:
                     continue
                 t = (m.message or "").upper()
-                # триггер — кнопка «огниво» (она есть только на нотификации бочки),
-                # либо явный текст «ЗАМИНИРОВАН…»
-                if self._has(m, "огниво") or (BOMB_NOTIF in t and self.flat_buttons(m)):
+                # ⚠️ ФАНТОМНАЯ БОЧКА (баг Максима 29.07): экран Дружины/инвентаря/магазина ТОЖЕ
+                # содержит кнопку «Огниво xN» + «ПОДЛОЖИТЬ БОЧКУ» — раньше кот принимал его за
+                # бочку на старте и зря снимал 200к из казны. Триггер ТОЛЬКО по реальному тексту
+                # «💣 ЗАМИНИРОВАНО!» и НЕ на инвентаре/магазине.
+                btns = " | ".join((bt or "").upper() for _, _, bt in self.flat_buttons(m))
+                is_inventory = any(w in btns for w in
+                                   ("ПОДЛОЖИТЬ БОЧКУ", "В МАГАЗИН", "ЗЕЛЬЕ ЖАБ", "ТРЕБУШЕТ", "ЭЛИКСИР"))
+                if BOMB_NOTIF in t and self.flat_buttons(m) and not is_inventory:
                     mined = m
                     break
         except Exception as e:

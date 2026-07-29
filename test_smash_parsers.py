@@ -84,6 +84,15 @@ check("поиск: несколько эмодзи по краям", search_quer
 check("поиск: латиница не трогается", search_query("rmtIsland"), "rmtIsland")
 check("поиск: чистое имя из списка без изменений", search_query("Миру мир"), "Миру мир")
 
+# ── ФАНТОМНАЯ БОЧКА (регресс 29.07: экран Дружины/инвентаря принимался за бочку) ──
+from holop_smash import BOMB_NOTIF
+DRUZHINA_BTNS = "ПОДЛОЖИТЬ БОЧКУ (2 ШТ.) | ЗЕЛЬЕ ЖАБ X10 | ОГНИВО X45 | ТРЕБУШЕТ 25⭐ | В МАГАЗИН"
+REAL_BOMB_TXT = "💣 ЗАМИНИРОВАНО! Твоя территория заминирована!".upper()
+_inv = lambda b: any(w in b for w in ("ПОДЛОЖИТЬ БОЧКУ", "В МАГАЗИН", "ЗЕЛЬЕ ЖАБ", "ТРЕБУШЕТ", "ЭЛИКСИР"))
+check("фантом: экран Дружины опознан как инвентарь (НЕ бочка)", _inv(DRUZHINA_BTNS), True)
+check("фантом: реальная бочка содержит текст ЗАМИНИРОВАН", BOMB_NOTIF in REAL_BOMB_TXT, True)
+check("фантом: у Дружины нет текста ЗАМИНИРОВАН", BOMB_NOTIF in DRUZHINA_BTNS, False)
+
 print()
 if _fails:
     print(f"❌ ПРОВАЛЕНО: {len(_fails)} — {', '.join(_fails)}")
