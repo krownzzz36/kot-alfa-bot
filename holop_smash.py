@@ -782,14 +782,20 @@ class Smasher:
             sts = parse_profile_statuses(prof)
             card["statuses"] = [{"name": x["name"], "count": x["count"], "until": now + x["secs"]}
                                 for x in sts]
-            # главный «щит» для заголовочного таймера — самый долгий защитный статус
-            shield_secs = 0
+            # ЗАГОЛОВОЧНЫЙ таймер «когда ОТКРОЕТСЯ» — считаем ТОЛЬКО закрывающие статусы:
+            # Полевой щит / Купол / Стена / закрытые границы / Закрыто. Ополченцы, Дух дружины,
+            # Частокол, Рейтинг, обоз — это доп. защита/бонусы, они НЕ закрывают цель (Владимир).
+            CLOSE = ("полев", "купол", "стена", "границ", "закрыт")
+            close_secs, close_name = 0, ""
             for x in sts:
-                low = x["name"].lower()
-                if any(w in low for w in ("щит", "oboz", "обоз", "купол", "стена", "поле", "ополчен")):
-                    shield_secs = max(shield_secs, x["secs"])
-            if shield_secs > 0 and card["shield_until"] < now + shield_secs:
-                card["shield_until"] = now + shield_secs
+                if any(w in x["name"].lower() for w in CLOSE) and x["secs"] > close_secs:
+                    close_secs, close_name = x["secs"], x["name"]
+            if close_secs > 0:
+                card["shield_until"] = now + close_secs
+                if close_name:
+                    card["shield_name"] = close_name
+            elif card["status"] == "щит":
+                card["shield_until"] = 0     # щит есть, но закрывающего таймера в профиле нет
         return card
 
     async def scout_oko(self, nicks):

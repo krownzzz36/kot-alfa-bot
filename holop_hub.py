@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-53"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-54"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -2166,8 +2166,22 @@ const OKO = (function(){
     if(c.shield_until>now) return '🛡 '+(c.shield_name?esc(c.shield_name)+' ':'щит ')+fmt(c.shield_until-now)+' <span class="oko-abs">до '+fmtAbs(c.shield_until)+'</span>';
     if(c.cd_until>now)     return '⌛ КД '+fmt(c.cd_until-now)+' <span class="oko-abs">до '+fmtAbs(c.cd_until)+'</span>';
     if(c.status&&BLOCKED.test(c.status)) return '<span class="oko-blk">'+esc(c.status)+'</span>';
+    if(c.status==='щит') return '🛡 '+(c.shield_name?esc(c.shield_name):'закрыто')+' <span class="oko-abs">(таймер не прочитан)</span>';
     if(c.status==='слаб') return '💤 слаб (HP низкий)';
     return '<b class="open-lbl">⚔ ЦЕЛЬ ОТКРЫТА</b>';
+  }
+  function isFrog(n){ return /пэп[эе]/i.test(n||''); }   // 🐸 только для «Пэпэ кха»
+  function drawFrog(cv){
+    var ctx=cv.getContext('2d'); ctx.clearRect(0,0,14,15);
+    var G='#4faf3a',GD='#357a26',W='#f4fff0',P='#12210f',B='#b7e39a';
+    function px(x,y,c){ctx.fillStyle=c;ctx.fillRect(x,y,1,1);}
+    for(var y=5;y<=12;y++)for(var x=2;x<=11;x++){ if((x<3||x>10)&&(y<7||y>10))continue; px(x,y,G); }
+    // глаза-бугорки сверху
+    [[3,3],[4,3],[3,4],[4,4],[9,3],[10,3],[9,4],[10,4]].forEach(function(p){px(p[0],p[1],G);});
+    px(3,3,W);px(4,3,W);px(9,3,W);px(10,3,W); px(4,3,P);px(9,3,P);   // белки + зрачки
+    for(var x2=4;x2<=9;x2++)px(x2,10,GD);   // рот-улыбка
+    for(var x3=4;x3<=9;x3++)px(x3,11,B);    // светлое брюшко
+    px(2,12,G);px(11,12,G);px(3,13,GD);px(10,13,GD);   // лапки
   }
   function stsHTML(c,now){
     if(!c.statuses||!c.statuses.length)return '';
@@ -2200,7 +2214,7 @@ const OKO = (function(){
     const now=Date.now()/1000;
     if(!cards.length){ wrap.innerHTML='<div class="oko-empty">Око пусто. Впиши имена жертв и разожги Око — он сам зайдёт на каждого и соберёт разведку.</div>'; return; }
     wrap.innerHTML=cards.map((c,i)=>cardHTML(c,i,now)).join('');
-    wrap.querySelectorAll('.oko-orc').forEach(cv=>drawOrc(cv,cv.dataset.n));
+    wrap.querySelectorAll('.oko-orc').forEach(cv=>{ if(isFrog(cv.dataset.n)) drawFrog(cv); else drawOrc(cv,cv.dataset.n); });
   }
   function tick(){
     const now=Date.now()/1000;
