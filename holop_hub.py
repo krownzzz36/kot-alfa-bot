@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-54"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-55"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -2173,15 +2173,21 @@ const OKO = (function(){
   function isFrog(n){ return /пэп[эе]/i.test(n||''); }   // 🐸 только для «Пэпэ кха»
   function drawFrog(cv){
     var ctx=cv.getContext('2d'); ctx.clearRect(0,0,14,15);
-    var G='#4faf3a',GD='#357a26',W='#f4fff0',P='#12210f',B='#b7e39a';
+    var G='#5bbf42',GD='#3a7d28',W='#ffffff',P='#0e1c0a',B='#c8f0a6';
+    function rc(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(x,y,w,h);}
     function px(x,y,c){ctx.fillStyle=c;ctx.fillRect(x,y,1,1);}
-    for(var y=5;y<=12;y++)for(var x=2;x<=11;x++){ if((x<3||x>10)&&(y<7||y>10))continue; px(x,y,G); }
-    // глаза-бугорки сверху
-    [[3,3],[4,3],[3,4],[4,4],[9,3],[10,3],[9,4],[10,4]].forEach(function(p){px(p[0],p[1],G);});
-    px(3,3,W);px(4,3,W);px(9,3,W);px(10,3,W); px(4,3,P);px(9,3,P);   // белки + зрачки
-    for(var x2=4;x2<=9;x2++)px(x2,10,GD);   // рот-улыбка
-    for(var x3=4;x3<=9;x3++)px(x3,11,B);    // светлое брюшко
-    px(2,12,G);px(11,12,G);px(3,13,GD);px(10,13,GD);   // лапки
+    // морда-жаба (широкая)
+    rc(2,6,10,7,G); px(1,8,G);px(1,9,G);px(12,8,G);px(12,9,G);
+    // крупные глаза-бугры сверху: белки + чёрные зрачки
+    rc(2,2,3,4,G); rc(9,2,3,4,G);        // бугорки
+    rc(2,2,3,3,W); rc(9,2,3,3,W);        // белки
+    px(3,3,P);px(4,3,P);px(3,4,P);       // левый зрачок
+    px(9,3,P);px(10,3,P);px(10,4,P);     // правый зрачок
+    // широкая улыбка + светлое брюшко
+    rc(4,10,6,1,GD); px(3,9,GD);px(10,9,GD);
+    rc(4,11,6,1,B);
+    // лапки
+    px(2,13,GD);px(3,13,GD);px(10,13,GD);px(11,13,GD);
   }
   function stsHTML(c,now){
     if(!c.statuses||!c.statuses.length)return '';
