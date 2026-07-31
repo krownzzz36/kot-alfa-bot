@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-55"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-56"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -1133,6 +1133,8 @@ class H(BaseHTTPRequestHandler):
             mid, action = parts[1], parts[2]
             if mid == "raids" and action == "start":
                 raids_start(); return self._json({"ok": True})
+            if mid == "raids" and action == "pause":
+                write_control("pause"); return self._json({"ok": True})   # кот жив, ждёт «run»
             if mid == "raids" and action == "stop":
                 raids_stop(); return self._json({"ok": True})
             if mid == "raids" and action == "night_on":
@@ -1541,7 +1543,9 @@ function render(mid){
         <summary><span class="acc-ic">🎮</span><span class="acc-t">Управление</span><span class="chev"></span></summary>
         <div class="acc-body">
           <div class="btns"><button id="btnStart" class="b-green" onclick="startRaids()">▶ Запустить</button>
+            <button id="btnPause" class="b-grey" onclick="post('${mid}','pause')">⏸ Пауза</button>
             <button id="btnStop" class="b-red" onclick="post('${mid}','stop')">⏹ Остановить</button></div>
+          <div class="note" style="margin-top:6px">⏸ <b>Пауза</b> — кот замирает, но остаётся живым и слушает (не выключается). «Запустить» — продолжит с места. ⏹ <b>Остановить</b> — полностью гасит кота.</div>
           <button id="nightBtn" class="b-night" style="margin-top:9px" onclick="toggleNight()">🌙 Ночной режим</button>
           <div class="note">🌙 держит Mac бодрым (caffeinate) + сам перезапускает бота, если упал/завис. Для фарма на ночь.</div>
         </div>
