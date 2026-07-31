@@ -543,6 +543,7 @@ class Smasher:
         self._bomb_done = set()       # id уже обработанных нотификаций бочки (не дублировать)
         self._last_bomb_scan = 0.0    # когда последний раз сканировали бочку внутри прохода
         self._holop_guard = True      # 🚨 авто-отбой угона холопа (выкуп/защита), галочка, деф ВКЛ
+        self._holop_redrive = True    # 🔁 после отбоя, если холоп не Воин — перегнать в Воина (реролл), деф ВКЛ
         self._theft_done = set()      # id обработанных уведомлений угона (не зациклиться)
         self._theft_pending = None    # сообщение-уведомление угона (ставит СОБЫТИЕ @holop, без опроса)
         self._theft_busy = False      # идёт отбой угона/бочки — не запускать вложенный (реентранси-гард)
@@ -879,6 +880,7 @@ class Smasher:
         self._pierce_defenses = bool(data.get("pierce_defenses", getattr(self, "_pierce_defenses", True)))
         self._bomb_defense = bool(data.get("bomb_defense", getattr(self, "_bomb_defense", True)))
         self._holop_guard = bool(data.get("holop_guard", getattr(self, "_holop_guard", True)))  # 🚨 анти-кража холопа
+        self._holop_redrive = bool(data.get("holop_redrive", getattr(self, "_holop_redrive", True)))  # 🔁 перегон в Воина
         self._defense_only = bool(data.get("defense_only", getattr(self, "_defense_only", False)))
         self._bomb_gold_kazna = bool(data.get("bomb_gold_kazna", getattr(self, "_bomb_gold_kazna", True)))
         was_sauron = getattr(self, "_sauron", False)
@@ -2396,6 +2398,49 @@ class Smasher:
                 continue
             return False   # иной алерт — не смогли
 
+    async def _redrive_to_voin(self, name):
+        """🔁 Перегнать холопа в Воина — переиспользуем ТЕСТИРОВАННЫЙ реролл (Reroller) на ТОМ ЖЕ
+        клиенте (без второй сессии): выгон→захват до Воина→охрана. True — вышло. Любой сбой →
+        False (наверху ставим просто защиту — холоп не теряется, анти-кража страхует)."""
+        try:
+            from holop_reroll import Reroller
+            cfg = load_config()
+        except Exception as e:
+            log(f"  ⚠️ перегон недоступен ({type(e).__name__}) — ставлю защиту (fallback).")
+            return False
+        try:
+            log(f"  🔁 «{name}» не Воин — перегоняю в Воина (выгон→захват до Воина→охрана)…")
+            rr = Reroller(self.c, cfg, dry_run=False)
+            await rr.process(name, "Воин")
+            st = rr.stats.get(name) or rr.stats.get(name.strip()) or {}
+            if st.get("final") == "Воин":
+                log(f"  ⚔️🛡️ «{name}» перегнан в Воина и защищён. Полная победа!")
+                self.stats["saved_holops"] = self.stats.get("saved_holops", 0) + 1
+                return True
+            log(f"  ↩️ перегон «{name}» не дал Воина (итог: {st.get('final')}) — ставлю защиту (fallback).")
+            return False
+        except Exception as e:
+            if _is_dead_session(e):
+                raise
+            log(f"  ⚠️ перегон «{name}» сбой: {type(e).__name__}: {e} — ставлю защиту (fallback).")
+            return False
+
+    async def _try_protect_now(self, name_s):
+        """Дожать «Защитить» на нашем холопе (после того как окно прошло). True — охрана встала."""
+        m = self._theft_latest(await self.recent(6))
+        if not m:
+            return False
+        p = self._btn_pos(m, THEFT_PROTECT_BTN)
+        if not p:
+            return False
+        res = await self.click(m, p[0], p[1], label=f"защитить {name_s}")
+        alert = (self._alert_text(res) or "").lower()
+        if "охрана установлена" in alert or "защищ" in alert:
+            log(f"  🛡️ «{name_s}» ЗАЩИЩЁН! ({self._alert_text(res).strip()}) Победа!")
+            self.stats["saved_holops"] = self.stats.get("saved_holops", 0) + 1
+            return True
+        return False
+
     async def handle_holop_theft(self, first):
         name = re.search(r"Холоп:\s*([^\n]+)", first.message or "")
         name_s = name.group(1).strip() if name else "?"
@@ -2427,13 +2472,10 @@ class Smasher:
             # ── ВОЛХВ: гонка закрыта (перехват невозможен) ──
             if VOLHV_WORD in prof_s or VOLHV_WORD in low:
                 if THEFT_BOUGHT in low:
-                    log(f"  👑 ВОЛХВ — «{name_s}» закреплён за МНОЙ (перехват невозможен). Ставлю охрану…")
+                    # Волхв уже не перехватить → холоп закреплён. Защиту НЕ ставим (Владимир:
+                    # Волхва всё равно перегонять) — оставляем как есть.
+                    log(f"  👑 ВОЛХВ — «{name_s}» закреплён за МНОЙ (перехват невозможен). Защиту не ставлю (перегонишь сам).")
                     won = True
-                    # Волхв = соперник больше не перекупит → спокойно дожимаем ОХРАНУ (ждём окно 23с)
-                    if await self._protect_won_holop(name_s, time.time() + 60):
-                        log(f"  🛡️ «{name_s}» — охрана установлена. Полная победа!")
-                    else:
-                        log(f"  👑 «{name_s}» закреплён Волхвом (охрану доставить не удалось, но перехват невозможен).")
                 else:
                     log(f"  💀 ВОЛХВ у соперника — «{name_s}» потерян (перехватить нельзя).")
                 break
@@ -2444,35 +2486,53 @@ class Smasher:
                     log(f"  🪙 Выкупил «{name_s}» обратно — держу окно ~23с.")
                 await rsleep(1.5)
                 continue
-            # ── холоп МОЙ → пробую защитить ──
+            # ── холоп МОЙ → пробую защитить (или перегнать в Воина) ──
             if THEFT_BOUGHT in low:
+                is_voin = "воин" in prof_s
                 p = self._btn_pos(m, THEFT_PROTECT_BTN)
                 if not p:
                     await rsleep(2)
                     continue
                 res = await self.click(m, p[0], p[1], label=f"защитить {name_s}")
                 alert = (self._alert_text(res) or "").lower()
-                if "охрана установлена" in alert or "защищ" in alert:
-                    log(f"  🛡️ «{name_s}» ЗАЩИЩЁН! ({self._alert_text(res).strip()}) Победа!")
-                    self.stats["saved_holops"] += 1
-                    won = True
-                    break
+                if "не твой" in alert:
+                    log(f"  ↩️ «{name_s}» перекуплен — выкупаю заново.")
+                    await rsleep(1)
+                    continue
                 if "подожди" in alert:
                     sec = re.search(r"(\d+)\s*сек", alert)
                     wait = int(sec.group(1)) if sec else 20
                     log(f"  ⏱ Ещё рано защищать (окно {wait}с) — держу, слежу за перекупом.")
-                    waited = 0.0
+                    waited, rebought = 0.0, False
                     while waited < wait + 1 and time.time() < deadline:
                         await rsleep(3)
                         waited += 3
                         nm = self._theft_latest(await self.recent(6))
                         if nm and THEFT_NOTIF in (nm.message or "").lower():
+                            rebought = True
                             break                 # соперник перекупил → на выкуп
+                    if rebought:
+                        continue
+                    # ОКНО ПРОШЛО, соперник молчит → холоп прочно мой.
+                    if self._holop_redrive and not is_voin:
+                        if await self._redrive_to_voin(name_s):   # перегон в Воина (+охрана внутри)
+                            won = True
+                            break
+                        # перегон не вышел → fallback: просто защищаем
+                    if await self._try_protect_now(name_s):
+                        won = True
+                        break
                     continue
-                if "не твой" in alert:
-                    log(f"  ↩️ «{name_s}» перекуплен — выкупаю заново.")
-                    await rsleep(1)
-                    continue
+                if "охрана установлена" in alert or "защищ" in alert:
+                    # окно уже прошло с первого клика — защитили.
+                    if not is_voin and self._holop_redrive:
+                        log(f"  ⚠️ «{name_s}» защищён, но НЕ Воин ({prof_s.strip()}) — перегони вручную "
+                            f"(автоперегон закрытого требует зелья жаб).")
+                    else:
+                        log(f"  🛡️ «{name_s}» ЗАЩИЩЁН! Победа!")
+                    self.stats["saved_holops"] += 1
+                    won = True
+                    break
                 log(f"  ⁇ защита: алерт «{self._alert_text(res).strip()}» — продолжаю.")
                 await rsleep(2)
                 continue

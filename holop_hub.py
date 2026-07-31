@@ -29,7 +29,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-VERSION = "2026.07.29-56"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
+VERSION = "2026.07.29-57"   # видно в консоли и в шапке панели — чтобы понимать, свежая ли версия
 PY = sys.executable or "python3"
 
 
@@ -638,7 +638,8 @@ SMASH_SETTINGS_DEFAULTS = {"my_min_hp": 25, "my_recover_to": 50, "sec_per_hp": 6
                            "req_delay_lo": 1.5, "req_delay_hi": 3.5,
                            "bomb_defense": True, "defense_only": False,
                            "bomb_gold_kazna": True, "auto_guard": False,
-                           "sauron_mode": False, "human_idle": True, "holop_guard": True}
+                           "sauron_mode": False, "human_idle": True, "holop_guard": True,
+                           "holop_redrive": True}
 
 
 def load_smash_settings():
@@ -685,6 +686,7 @@ def save_smash_settings(body):
         out["sauron_mode"] = bool(body.get("sauron_mode", cur["sauron_mode"]))   # 🔥 режим Саурона
         out["human_idle"] = bool(body.get("human_idle", cur["human_idle"]))      # 🎭 человеческие залипы
         out["holop_guard"] = bool(body.get("holop_guard", cur["holop_guard"]))   # 🚨 анти-кража холопа
+        out["holop_redrive"] = bool(body.get("holop_redrive", cur["holop_redrive"]))  # 🔁 перегон в Воина
     except (TypeError, ValueError):
         return False
     try:
@@ -1587,6 +1589,7 @@ function render(mid){
             ${swHTML('set_auto_oboz','🐴 Авто-обоз (+50% серебра с набегов — 400🏅 золота / 50 мин)')}
             ${swHTML('set_bomb_defense','💣 Защита от бочек (разминировать + восстановить после взрыва) — держать ВКЛ')}
             ${swHTML('set_holop_guard','🚨 Анти-кража холопа (украли — мгновенно выкупаю обратно и ставлю на защиту) — держать ВКЛ')}
+            ${swHTML('set_holop_redrive','🔁 После отбоя перегнать холопа в Воина (если выпал не Воин и соперник затих). Волхва не защищаю. Если перегон не выйдет — просто ставлю защиту')}
             ${swHTML('set_bomb_gold_kazna','🏦 После взрыва брать золото на защиту холопов из казны, если на балансе мало')}
             ${swHTML('set_free_hunt','🎯 Свободная охота — бить слабейших по защите прямо с арены (без списка целей)')}
             ${swHTML('set_war','⚔️ РЕЖИМ ВОЙНЫ — бить по КД без пауз, держать цели прижатыми (палевно)')}
@@ -1751,6 +1754,7 @@ async function loadSettings(){
     const ao=$('#set_auto_oboz'); if(ao) ao.checked=!!d.auto_oboz;
     const bd=$('#set_bomb_defense'); if(bd) bd.checked=(d.bomb_defense!==false);
     const hg=$('#set_holop_guard'); if(hg) hg.checked=(d.holop_guard!==false);
+    const hr=$('#set_holop_redrive'); if(hr) hr.checked=(d.holop_redrive!==false);
     const bgk=$('#set_bomb_gold_kazna'); if(bgk) bgk.checked=(d.bomb_gold_kazna!==false);
     const ag=$('#set_auto_guard'); if(ag) ag.checked=!!d.auto_guard;
     const fh=$('#set_free_hunt'); if(fh) fh.checked=!!d.free_hunt;
@@ -1778,6 +1782,7 @@ async function saveSettings(){
     auto_oboz:!!($('#set_auto_oboz')||{}).checked,
     bomb_defense:!!($('#set_bomb_defense')||{}).checked,
     holop_guard:!!($('#set_holop_guard')||{}).checked,
+    holop_redrive:!!($('#set_holop_redrive')||{}).checked,
     bomb_gold_kazna:!!($('#set_bomb_gold_kazna')||{}).checked,
     auto_guard:!!($('#set_auto_guard')||{}).checked,
     free_hunt:!!($('#set_free_hunt')||{}).checked,
